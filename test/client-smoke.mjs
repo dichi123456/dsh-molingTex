@@ -505,9 +505,10 @@ try {
       const tail = html.slice(Math.max(0, html.length - 900))
       return tail.includes('>日志<') || /日志 \(\d\)/.test(tail)
     })()],
-    ['编译下拉只选方式', html.includes('完整编译') && html.includes('快速编译') && html.includes('从头编译')],
+    ['编译是分体按钮（下拉 1/4 + 按钮 3/4）', html.includes('width:25%') && html.includes('width:75%')],
+    ['下拉里是短标签', html.includes('>完整<') && html.includes('>快速<') && html.includes('>从头<')],
     ['另有「编译」按钮', html.includes('>编译<')],
-    ['不再有单独的模式下拉', !html.includes('>完整<')],
+    ['右键菜单默认不显示', !html.includes('定位到 PDF 位置')],
     ['缩放到 200% 时页面宽度翻倍', html.includes('width:200.00%')],
     ['显示缩放百分比', html.includes('200%')],
     ['右栏有缩放按钮', html.includes('>－<') && html.includes('>＋<')],
@@ -517,6 +518,13 @@ try {
     ['编译方式常量是三档', bundle.__COMPILE_MODES.map((x) => x[0]).join() === 'full,quick,clean']
   ]
   for (const [label, passed] of checks) passed ? ok(label) : bad(label, label.includes('百分比') ? String(percent(100, 595.276)) : '')
+
+  // 右键菜单：给出行号后应渲染出「定位到 PDF 位置」
+  store.menu = { x: 40, y: 60, line: 3 }
+  const menuHtml = render()
+  const menuOk = menuHtml.includes('定位到 PDF 位置（第 3 行）') && menuHtml.includes('position:fixed')
+  menuOk ? ok('右键菜单渲染「定位到 PDF 位置」') : bad('右键菜单没渲染', menuHtml.slice(-200))
+  store.menu = null
 
   store.pdfZoom = 1
   store.syncMark = null

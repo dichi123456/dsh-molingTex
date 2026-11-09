@@ -38,7 +38,7 @@ ctx.slots.inject('sidebar.right.pane.tab', () =>
 | 启动页 | 最近 | 一行一条：`工作区`/`文件` 类型标签 + 名称 + 右对齐路径；点工作区进项目，点文件直接打开 |
 | 启动页 | 模板 | 一张卡片：`新建中文文档`（ctexart 骨架：标题/作者/日期/一节正文） |
 | 启动页 | 提示栏 | 快捷键速查、TeX 环境（版本 + bin 目录）、数据通道状态；窄的时候自动折到下方 |
-| 工作台 | 顶部条 | `首页`（回启动页）、工作区下拉、`目录`、`树`（浮层文件树）、`日志`、`换行`、`保存`，右端是**编译下拉**（完整/快速/从头，选哪项立刻按该方式编译） |
+| 工作台 | 顶部条 | `首页`、工作区下拉、`目录`、`树`（浮层文件树）、`换行`、`保存`，右端是**分体编译按钮**：左边 1/4 下拉选方式（完整/快速/从头），右边 3/4 点一下才编译（`F5` 同效） |
 | 工作台 | 左栏 | 标签条（多标签、未保存 ●、`×` 关闭）+ 编辑器（LaTeX 语法高亮、行号、软换行；`F5` 编译、`Ctrl+S` 保存、`Tab` 缩进） |
 | 工作台 | 分栏 | tex 与 pdf 之间是**可拖动分隔条**（20%–80%），宽度记进 localStorage |
 | 工作台 | 右栏 | `日志` / `PDF` 切换；日志里错误行可点击跳到源码行；PDF 是**逐页图片**（可 Ctrl+滚轮缩放），**单击页面可定位回源码行**；引擎/清晰度/清理/新标签在右栏头部；**编译状态与错误显示在预览区底部** |
@@ -63,10 +63,11 @@ ctx.slots.inject('sidebar.right.pane.tab', () =>
 
 ### SyncTeX 双向定位
 
-- **源码 → PDF**：编辑器里**双击某行** → `synctex view` 拿到 `{page,x,y}` → 右栏自动切到 PDF 并滚到该页，黄色圆圈标出位置。
-- **PDF → 源码**：在预览页上**单击** → 把点击处换算成 PDF 点（`px / dpi * 72`）→ `synctex edit` 拿到行号 → 编辑器跳到该行。
+- **源码 → PDF**：编辑器里**右键** → 菜单「定位到 PDF 位置（第 N 行）」→ `synctex view` 拿到 `{page,x,y}` → 右栏切到 PDF、滚到该页，黄色圆圈标出位置。
+- **PDF → 源码**：在预览页上**单击** → 点击处换算成 PDF 点（`px / dpi * 72`）→ `synctex edit` 拿到行号 → 编辑器跳到该行。
+- 结果写在**底部状态栏**（`第 6 行 → 第 1 页` / `PDF 第 1 页 → 源码第 10 行`）；失败也写在那里。
 - 前提：编译时带 `-synctex=1`（本插件的编译流程默认带），PDF 与 `.synctex.gz` 同目录。
-- 状态写在预览区底部：`定位到第 N 页` / `PDF 第 N 页 → 源码第 M 行`；失败会写原因（如 `.synctex.gz` 缺失）。
+- 已知修复：多页 PDF 里「源码→PDF」曾经滚错页（页面 ref 的闭包写到了最后一页），已改成按页捕获。
 
 ### 语法高亮（回退实现 / 分词逻辑）
 
@@ -183,11 +184,11 @@ plugin_manager install_bundle  E:\E_个人项目\Latex_APP\dsh-plugin-moling-lat
 node test/smoke.mjs          # 工具：注册 / 引擎识别 / status / outline / quick / 失败路径（12）
 node test/smoke.mjs --full   # 追加 full、中文 xelatex、SyncTeX、clean
 node test/server-smoke.mjs   # 宿主 API：14 个端点 + 白名单 + 越界 + 读写 + 编译 + PDF + asset + synctex（32）
-node test/client-smoke.mjs   # 浏览器半侧：bundle/槽位/SSR/词法/路径/PDF 预览/编辑器/顶栏与缩放（115）
+node test/client-smoke.mjs   # 浏览器半侧：bundle/槽位/SSR/词法/路径/PDF 预览/编辑器/顶栏与缩放（117）
 node test/live-api.mjs       # 对正在运行的 DSH 打真实 HTTP（端口取 DSH_WEB_URL）
 ```
 
-合计 **12 + 32 + 115 = 159** 项。
+合计 **12 + 32 + 117 = 161** 项。
 
 `client-smoke` 用本地 DSH 源码 checkout 里的 React；找不到就跳过（可设 `DSH_CHECKOUT`）。
 
