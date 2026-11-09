@@ -196,11 +196,11 @@ plugin_manager install_bundle  E:\E_个人项目\Latex_APP\dsh-plugin-moling-lat
 node test/smoke.mjs          # 工具：注册 / 引擎识别 / status / outline / quick / 失败路径（12）
 node test/smoke.mjs --full   # 追加 full、中文 xelatex、SyncTeX、clean
 node test/server-smoke.mjs   # 宿主 API：15 个端点 + 白名单 + 越界 + 读写 + 编译 + PDF + asset + synctex + outline（34）
-node test/client-smoke.mjs   # 浏览器半侧：bundle/槽位/SSR/词法/路径/PDF/编辑器/顶栏/提纲/连接（144）
+node test/client-smoke.mjs   # 浏览器半侧：bundle/槽位/SSR/词法/路径/PDF/编辑器/顶栏/提纲/新建/连接（145）
 node test/live-api.mjs       # 对正在运行的 DSH 打真实 HTTP（端口取 DSH_WEB_URL）
 ```
 
-合计 **12 + 34 + 144 = 190** 项。
+合计 **12 + 34 + 145 = 191** 项。
 
 `client-smoke` 用本地 DSH 源码 checkout 里的 React；找不到就跳过（可设 `DSH_CHECKOUT`）。
 

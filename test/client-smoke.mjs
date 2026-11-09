@@ -568,6 +568,7 @@ try {
   const outlineHtml = render()
   const outlineChecks = [
     ['顶栏有「提纲」按钮', outlineHtml.includes('>提纲<')],
+    ['顶栏有「新建」按钮（提纲旁边）', outlineHtml.includes('>新建<') && outlineHtml.indexOf('>提纲<') < outlineHtml.indexOf('>新建<')],
     ['浮层显示章节标题', outlineHtml.includes('引言') && outlineHtml.includes('车辆模型')],
     ['浮层显示行号', outlineHtml.includes('>12<') || outlineHtml.includes('>3<')],
     ['浮层贴左下角', outlineHtml.includes('bottom:8') && outlineHtml.includes('left:8')],
