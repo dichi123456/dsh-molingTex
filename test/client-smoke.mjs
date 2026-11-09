@@ -499,11 +499,18 @@ try {
   const checks = [
     ['顶栏有「换行」', html.includes('>换行<')],
     ['顶栏有「保存」', html.includes('>保存<')],
-    ['顶栏有「日志」', html.includes('>日志<') || /日志 \(\d\)/.test(html)],
-    ['编译下拉三合一', html.includes('完整编译') && html.includes('快速编译') && html.includes('从头编译')],
+    // 日志 / PDF 切换挪到状态栏最右：出现在「就绪」之后，且接近文档结尾
+    ['日志/PDF 在状态栏', html.indexOf('>日志<') > html.indexOf('就绪') || /日志 \(\d\)/.test(html.slice(html.indexOf('就绪')))],
+    ['状态栏在文档尾部', (function () {
+      const tail = html.slice(Math.max(0, html.length - 900))
+      return tail.includes('>日志<') || /日志 \(\d\)/.test(tail)
+    })()],
+    ['编译下拉只选方式', html.includes('完整编译') && html.includes('快速编译') && html.includes('从头编译')],
+    ['另有「编译」按钮', html.includes('>编译<')],
     ['不再有单独的模式下拉', !html.includes('>完整<')],
     ['缩放到 200% 时页面宽度翻倍', html.includes('width:200.00%')],
     ['显示缩放百分比', html.includes('200%')],
+    ['右栏有缩放按钮', html.includes('>－<') && html.includes('>＋<')],
     ['定位环渲染在页面上', html.includes('border-radius:50%')],
     ['定位环按页面尺寸换算百分比', percent(100, 595.276) === '16.799%' && percent(200, 841.89) === '23.756%'],
     ['页面可点击定位（crosshair 光标）', html.includes('crosshair')],
