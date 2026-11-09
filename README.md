@@ -66,6 +66,7 @@ ctx.slots.inject('sidebar.right.pane.tab', () =>
 
 - **连接状态胶囊**（顶栏编译按钮左边）：把当前项目目录与 DSH 工作区列表比对，三种状态 ——
   `已连接 DSH 工作区`（绿）/ `同名工作区不同路径`（黄，防止发错项目）/ `未连接 DSH 工作区`（灰）。
+  只认 `kind === 'workspace'` 的条目：宿主列表里还有 `kind: 'opened'`（插件自己打开过的目录），**那种不算连接**。
   未连接时**点一下**就调客户端服务 `workspaces.create({ path })` 把该目录加进左侧工作区；已连接时点一下是刷新。切回窗口会自动刷新工作区列表。
 - **发送选中内容到对话框**（编辑器右键菜单）：把选区包成「出处 + `latex` 代码块」送进当前会话的输入框（不自动发送）：
   `> 来自 main.tex 第 12–15 行` + 围栏代码。通道是右栏 tab body 的注入属性 `inputActions`（依次探 `appendText`/`insertText`/`setText`/…），
@@ -195,11 +196,11 @@ plugin_manager install_bundle  E:\E_个人项目\Latex_APP\dsh-plugin-moling-lat
 node test/smoke.mjs          # 工具：注册 / 引擎识别 / status / outline / quick / 失败路径（12）
 node test/smoke.mjs --full   # 追加 full、中文 xelatex、SyncTeX、clean
 node test/server-smoke.mjs   # 宿主 API：15 个端点 + 白名单 + 越界 + 读写 + 编译 + PDF + asset + synctex + outline（34）
-node test/client-smoke.mjs   # 浏览器半侧：bundle/槽位/SSR/词法/路径/PDF/编辑器/顶栏/提纲/连接（142）
+node test/client-smoke.mjs   # 浏览器半侧：bundle/槽位/SSR/词法/路径/PDF/编辑器/顶栏/提纲/连接（144）
 node test/live-api.mjs       # 对正在运行的 DSH 打真实 HTTP（端口取 DSH_WEB_URL）
 ```
 
-合计 **12 + 34 + 142 = 188** 项。
+合计 **12 + 34 + 144 = 190** 项。
 
 `client-smoke` 用本地 DSH 源码 checkout 里的 React；找不到就跳过（可设 `DSH_CHECKOUT`）。
 

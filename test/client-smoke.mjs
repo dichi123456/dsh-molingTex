@@ -616,11 +616,14 @@ try {
   const none = connectionOf('E:/proj/paper', [{ path: 'E:\\other\\novel', title: 'novel' }])
   const conflict = connectionOf('E:/proj/paper', [{ path: 'D:\\backup\\paper', title: 'paper' }])
   const unknown = connectionOf('E:/proj/paper', [])
+  // 只是插件打开过的目录（kind: 'opened'）不算「已连接工作区」—— 之前就错在这里
+  const openedOnly = connectionOf('E:/proj/paper', [{ path: 'E:/proj/paper', title: 'paper', kind: 'opened' }])
   const checks = [
     ['路径命中 → 已连接', linked.state === 'linked' && linked.text.includes('已连接')],
     ['没有交集 → 未连接', none.state === 'none' && none.text.includes('未连接')],
     ['同名不同路径 → 冲突', conflict.state === 'conflict'],
     ['列表为空 → 未知', unknown.state === 'unknown'],
+    ['kind:opened 不算已连接', openedOnly.state !== 'linked'],
     ['路径归一化（斜杠/大小写/尾斜杠）', normalizePath('E:/Proj/Paper/') === 'e:\\proj\\paper']
   ]
   for (const [label, passed] of checks) passed ? ok(label) : bad(label)
@@ -630,9 +633,12 @@ try {
   const linkedHtml = render()
   store.workspaces = [{ path: 'E:/other/novel', title: 'novel', kind: 'workspace' }]
   const noneHtml = render()
+  store.workspaces = [{ path: 'E:/proj/paper', title: 'paper', kind: 'opened' }]
+  const openedHtml = render()
   const pillChecks = [
     ['已连接时显示绿字', linkedHtml.includes('已连接 DSH 工作区')],
     ['未连接时提示导入', noneHtml.includes('未连接 DSH 工作区')],
+    ['只有 opened 目录时也算未连接', openedHtml.includes('未连接 DSH 工作区')],
     ['状态胶囊带说明（title）', linkedHtml.includes('这个项目已在左侧工作区')],
     ['未连接时胶囊可点提示导入', noneHtml.includes('点一下把')]
   ]
