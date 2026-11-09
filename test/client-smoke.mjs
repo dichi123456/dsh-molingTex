@@ -601,5 +601,62 @@ try {
   bad('顶栏/缩放测试抛错', String(error.message))
 }
 
+console.log('15) DSH 工作区连接状态 + 发送选中内容')
+try {
+  const store = bundle.__store
+  const connectionOf = bundle.__connectionOf
+  const normalizePath = bundle.__normalizePath
+  const render = () => ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
+  store.view = 'workbench'
+  store.root = 'E:/proj/paper'
+  store.tabs = [{ id: 't-link', root: 'E:/proj/paper', rel: 'main.tex', name: 'main.tex', text: '\\section{a}\nline2\nline3', dirty: false }]
+  store.activeId = 't-link'
+
+  const linked = connectionOf('E:/proj/paper', [{ path: 'e:\\proj\\paper', title: 'paper' }])
+  const none = connectionOf('E:/proj/paper', [{ path: 'E:\\other\\novel', title: 'novel' }])
+  const conflict = connectionOf('E:/proj/paper', [{ path: 'D:\\backup\\paper', title: 'paper' }])
+  const unknown = connectionOf('E:/proj/paper', [])
+  const checks = [
+    ['路径命中 → 已连接', linked.state === 'linked' && linked.text.includes('已连接')],
+    ['没有交集 → 未连接', none.state === 'none' && none.text.includes('未连接')],
+    ['同名不同路径 → 冲突', conflict.state === 'conflict'],
+    ['列表为空 → 未知', unknown.state === 'unknown'],
+    ['路径归一化（斜杠/大小写/尾斜杠）', normalizePath('E:/Proj/Paper/') === 'e:\\proj\\paper']
+  ]
+  for (const [label, passed] of checks) passed ? ok(label) : bad(label)
+
+  // 顶栏悬浮状态胶囊
+  store.workspaces = [{ path: 'E:/proj/paper', title: 'paper', kind: 'workspace' }]
+  const linkedHtml = render()
+  store.workspaces = [{ path: 'E:/other/novel', title: 'novel', kind: 'workspace' }]
+  const noneHtml = render()
+  const pillChecks = [
+    ['已连接时显示绿字', linkedHtml.includes('已连接 DSH 工作区')],
+    ['未连接时提示导入', noneHtml.includes('未连接 DSH 工作区')],
+    ['状态胶囊带说明（title）', linkedHtml.includes('这个项目已在左侧工作区')],
+    ['未连接时胶囊可点提示导入', noneHtml.includes('点一下把')]
+  ]
+  for (const [label, passed] of pillChecks) passed ? ok(label) : bad(label)
+
+  // 右键菜单里的发送项 + 生成的消息体
+  store.menu = { x: 10, y: 10, line: 2 }
+  const menuHtml = render()
+  store.menu = null
+  menuHtml.includes('发送选中内容到对话框')
+    ? ok('右键菜单有「发送选中内容到对话框」')
+    : bad('右键菜单缺发送项')
+
+  const payload = bundle.__formatSelectionPayload('main.tex', 2, 3, 'a & b\n')
+  const payloadOk = payload.includes('> 来自 main.tex 第 2–3 行') && payload.includes('```latex\na & b\n```')
+  payloadOk ? ok('消息体带出处与 latex 代码块') : bad('消息体格式不对', JSON.stringify(payload))
+
+  store.tabs = []
+  store.activeId = null
+  store.root = ''
+  store.workspaces = []
+} catch (error) {
+  bad('连接状态测试抛错', String(error.message))
+}
+
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)
 process.exit(failures === 0 ? 0 : 1)

@@ -38,7 +38,7 @@ ctx.slots.inject('sidebar.right.pane.tab', () =>
 | 启动页 | 最近 | 一行一条：`工作区`/`文件` 类型标签 + 名称 + 右对齐路径；点工作区进项目，点文件直接打开 |
 | 启动页 | 模板 | 一张卡片：`新建中文文档`（ctexart 骨架：标题/作者/日期/一节正文） |
 | 启动页 | 提示栏 | 快捷键速查、TeX 环境（版本 + bin 目录）、数据通道状态；窄的时候自动折到下方 |
-| 工作台 | 顶部条 | `首页`、工作区下拉、`目录`、`树`（浮层文件树）、`换行`、`保存`、`提纲`，右端是**分体编译按钮**：左边 3/4 显示当前编译方式（完整编译/快速编译/从头编译），点一下即按该方式编译；右边 1/4 小三角点开才切换方式（`F5` 同效） |
+| 工作台 | 顶部条 | `首页`、工作区下拉、`目录`、`树`（浮层文件树）、`换行`、`保存`、`提纲`，右端是**连接状态胶囊 + 分体编译按钮**：胶囊显示项目是否已在左侧 DSH 工作区（点一下连接/刷新），编译按钮左边 3/4 显示当前编译方式、点一下即编译，右边 1/4 小三角改方式 |
 | 工作台 | 提纲 | 点 `提纲` → 编辑区**左下角浮出**章节列表（`\part`…`\paragraph`，按层级缩进 + 行号），点一条跳该行；解析在浏览器里做，不请求宿主 |
 | 工作台 | 左栏 | 标签条（多标签、未保存 ●、`×` 关闭）+ 编辑器（LaTeX 语法高亮、行号、软换行；`F5` 编译、`Ctrl+S` 保存、`Tab` 缩进） |
 | 工作台 | 分栏 | tex 与 pdf 之间是**可拖动分隔条**（20%–80%），宽度记进 localStorage |
@@ -61,6 +61,16 @@ ctx.slots.inject('sidebar.right.pane.tab', () =>
 - 配色仍只用主题 token（`--dsw-alias-*`），亮/暗自动跟随。
 - **回退**：内核脚本加载失败（端点缺失、离线等）→ 自动退回旧实现（透明 `<textarea>` 叠高亮层），功能一样、大文件会慢。回退路径的两层宽度补偿：`textarea` 用 `scrollbar-gutter: stable` 永久预留滚动条槽，高亮层按探测到的滚动条宽度补 `padding-right`，两层内容宽度恒等（这是此前「删错字」的根治手段）。
 - 重新构建内核：见 `lib/vendor/BUILD.md`（源码在 `lib/vendor/entry.js`）。
+
+### 与 DSH 会话互动
+
+- **连接状态胶囊**（顶栏编译按钮左边）：把当前项目目录与 DSH 工作区列表比对，三种状态 ——
+  `已连接 DSH 工作区`（绿）/ `同名工作区不同路径`（黄，防止发错项目）/ `未连接 DSH 工作区`（灰）。
+  未连接时**点一下**就调客户端服务 `workspaces.create({ path })` 把该目录加进左侧工作区；已连接时点一下是刷新。切回窗口会自动刷新工作区列表。
+- **发送选中内容到对话框**（编辑器右键菜单）：把选区包成「出处 + `latex` 代码块」送进当前会话的输入框（不自动发送）：
+  `> 来自 main.tex 第 12–15 行` + 围栏代码。通道是右栏 tab body 的注入属性 `inputActions`（依次探 `appendText`/`insertText`/`setText`/…），
+  拿不到就退化为复制到剪贴板并在状态栏提示。
+- 硬限制：只能作用于**当前会话**——DSH 没有“按工作区找会话并往里写文本”的 API，所以项目不在工作区时先拦住并提示先连接。
 
 ### SyncTeX 双向定位
 
@@ -185,11 +195,11 @@ plugin_manager install_bundle  E:\E_个人项目\Latex_APP\dsh-plugin-moling-lat
 node test/smoke.mjs          # 工具：注册 / 引擎识别 / status / outline / quick / 失败路径（12）
 node test/smoke.mjs --full   # 追加 full、中文 xelatex、SyncTeX、clean
 node test/server-smoke.mjs   # 宿主 API：15 个端点 + 白名单 + 越界 + 读写 + 编译 + PDF + asset + synctex + outline（34）
-node test/client-smoke.mjs   # 浏览器半侧：bundle/槽位/SSR/词法/路径/PDF/编辑器/顶栏/提纲（131）
+node test/client-smoke.mjs   # 浏览器半侧：bundle/槽位/SSR/词法/路径/PDF/编辑器/顶栏/提纲/连接（142）
 node test/live-api.mjs       # 对正在运行的 DSH 打真实 HTTP（端口取 DSH_WEB_URL）
 ```
 
-合计 **12 + 34 + 131 = 177** 项。
+合计 **12 + 34 + 142 = 188** 项。
 
 `client-smoke` 用本地 DSH 源码 checkout 里的 React；找不到就跳过（可设 `DSH_CHECKOUT`）。
 
