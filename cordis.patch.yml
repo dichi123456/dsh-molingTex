@@ -1,0 +1,16 @@
+# moling_latex bundle patch：把插件行插进 profile 的 loader 树。
+# 与 @deepseek-ai/dsh-base 用的是同一套 insert 语法（EntryOptions: id / name / config）。
+- insert:
+    - id: moling_latex
+      name: 'dsh-plugin-moling-latex'
+      config:
+        # 留空则每次调用时自动探测（本配置 > 墨灵TeX 的 config.json > PATH / 常见路径）
+        texlivePath: ''
+        # auto 表示按导言区识别引擎（ctex → xelatex，IEEEtran/elsarticle → pdflatex）
+        engine: auto
+        timeoutMs: 120000
+        # 写回会话记录的日志上限（字符）
+        maxLogChars: 8000
+        # 面板允许打开的根目录白名单。留空 = DSH 已注册工作区 + 用户在面板里
+        # 「目录」显式打开过的目录/文件所在目录；两者都没有时（注册表不可用）退化为任意已存在目录。
+        allowedRoots: []

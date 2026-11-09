@@ -1,0 +1,39 @@
+# 依赖与构建产物
+node_modules/
+out/
+dist/
+*.tsbuildinfo
+
+# 编译产物（fixtures 只保留 .tex 源文件）
+test/fixtures/*.pdf
+test/fixtures/*.aux
+test/fixtures/*.log
+test/fixtures/*.out
+test/fixtures/*.toc
+test/fixtures/*.synctex.gz
+test/fixtures/*.fls
+test/fixtures/*.fdb_latexmk
+test/fixtures/*.bbl
+test/fixtures/*.blg
+test/fixtures/*.nav
+test/fixtures/*.snm
+test/fixtures/*.vrb
+test/fixtures/*.bcf
+test/fixtures/*.run.xml
+
+# 自测留下的探针文件
+test/fixtures/live-probe.md
+test/fixtures/smoke-write.tex
+test/fixtures/api-write.tex
+test/fixtures/rpc-write.tex
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 本地密钥（绝不入库）
+*.token
+.gh_token
