@@ -512,6 +512,8 @@ try {
     ['编译是分体按钮（编译 3/4 在左、三角 1/4 在右）',
       html.includes('width:75%') && html.includes('width:25%') && html.indexOf('width:75%') < html.indexOf('width:25%')],
     ['右侧是小三角', html.includes('>▾<')],
+    ['编译按钮更窄（104px）', html.includes('width:104px')],
+    ['下拉与按钮等宽、左右边对齐', compileMenuHtml.includes('position:absolute;top:100%;left:0;right:0')],
     ['展开后有三种方式', compileMenuHtml.includes('完整编译') && compileMenuHtml.includes('快速编译') && compileMenuHtml.includes('从头编译')],
     ['按钮上显示当前编译方式', html.includes('>完整编译<') || html.includes('>快速编译<') || html.includes('>从头编译<')],
     ['右键菜单默认不显示', !html.includes('定位到 PDF 位置')],
