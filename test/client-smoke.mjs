@@ -496,6 +496,10 @@ try {
 
   const html = render()
   const percent = bundle.__syncPercent
+  // 展开编译方式下拉，验证三种模式在菜单里
+  store.compileMenu = true
+  const compileMenuHtml = render()
+  store.compileMenu = false
   const checks = [
     ['顶栏有「换行」', html.includes('>换行<')],
     ['顶栏有「保存」', html.includes('>保存<')],
@@ -505,8 +509,10 @@ try {
       const tail = html.slice(Math.max(0, html.length - 900))
       return tail.includes('>日志<') || /日志 \(\d\)/.test(tail)
     })()],
-    ['编译是分体按钮（下拉 1/4 + 按钮 3/4）', html.includes('width:25%') && html.includes('width:75%')],
-    ['下拉里是短标签', html.includes('>完整<') && html.includes('>快速<') && html.includes('>从头<')],
+    ['编译是分体按钮（编译 3/4 在左、三角 1/4 在右）',
+      html.includes('width:75%') && html.includes('width:25%') && html.indexOf('width:75%') < html.indexOf('width:25%')],
+    ['右侧是小三角', html.includes('>▾<')],
+    ['展开后有三种方式', compileMenuHtml.includes('完整编译') && compileMenuHtml.includes('快速编译') && compileMenuHtml.includes('从头编译')],
     ['另有「编译」按钮', html.includes('>编译<')],
     ['右键菜单默认不显示', !html.includes('定位到 PDF 位置')],
     ['缩放到 200% 时页面宽度翻倍', html.includes('width:200.00%')],
