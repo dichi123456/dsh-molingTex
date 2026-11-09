@@ -49,7 +49,19 @@ ctx.slots.inject('sidebar.right.pane.tab', () =>
 
 **最近文件为什么记 `abs`**：宿主的 `open-file` 收的是绝对路径（相对路径会按 DSH 进程的 cwd 解析，落成 `…\profiles\desktop\xxx.tex` 而报「文件不存在」）。所以最近记录里同时存 `value`（相对）与 `abs`（绝对）；老版本只存了相对路径的记录，会在打开时用 `root + value` 自动补全。
 
-### 语法高亮
+### 编辑器
+
+**CodeMirror 6**（`lib/vendor/cm6.js`，宿主用 `/moling/api/asset?name=cm6.js` 发出来），要点：
+
+- **只渲染视口内的行**（虚拟化）：1435 行 / 142 KB 的论文，DOM 里只有 ~29 行、行号 ~30 个；实测**每次按键 1 ms**（原生 `<textarea>` 同文档要 17–23 ms）。
+- 光标、选区、折行都是编辑器自己画的 → 不存在「字形与光标错位」。
+- LaTeX 着色用 CodeMirror 5 时代的 `stex` 模式（`@codemirror/legacy-modes`）+ `StreamLanguage`：[`@codemirror/lang-latex`](https://www.npmjs.com/package/@codemirror/lang-latex) 在当前 registry 上 404。
+- 自带：括号匹配、行号、搜索（`Ctrl+F`）、撤销栈、行内补全无关；`Ctrl+S` 保存、`F5` 编译、`Tab` 缩进都接管了。
+- 配色仍只用主题 token（`--dsw-alias-*`），亮/暗自动跟随。
+- **回退**：内核脚本加载失败（端点缺失、离线等）→ 自动退回旧实现（透明 `<textarea>` 叠高亮层），功能一样、大文件会慢。回退路径的两层宽度补偿：`textarea` 用 `scrollbar-gutter: stable` 永久预留滚动条槽，高亮层按探测到的滚动条宽度补 `padding-right`，两层内容宽度恒等（这是此前「删错字」的根治手段）。
+- 重新构建内核：见 `lib/vendor/BUILD.md`（源码在 `lib/vendor/entry.js`）。
+
+### 语法高亮（回退实现 / 分词逻辑）
 
 带状态的轻量 LaTeX 词法（跨行数学环境、注释、引用键），配色全部取自主题 token：
 
@@ -94,6 +106,7 @@ fetch('/moling/api/tree', { method: 'POST', headers: { 'content-type': 'applicat
 | `clean` | `{root,file}` | 清辅助文件 |
 | `pdf` | `{root,path,meta?}` | 整份 byte 数 + `mtime` + `pages`（页数）+ `raster`；不带 `meta` 时另给 `base64` |
 | `pdf-page` | `{root,path,page,dpi}` | 第 `page` 页的 **PNG 二进制**（GET 也支持：`?root=&path=&page=&dpi=`）；dpi 夹在 48–200 |
+| `asset` | `{name}` | 发 `lib/vendor/` 下的浏览器资源（目前只有 `cm6.js`）；只认 `[A-Za-z0-9._-]+\.(js\|css)` |
 
 ### PDF 预览：降分辨率图片，而不是浏览器内置阅读器
 
@@ -161,12 +174,12 @@ plugin_manager install_bundle  E:\E_个人项目\Latex_APP\dsh-plugin-moling-lat
 ```bash
 node test/smoke.mjs          # 工具：注册 / 引擎识别 / status / outline / quick / 失败路径（12）
 node test/smoke.mjs --full   # 追加 full、中文 xelatex、SyncTeX、clean
-node test/server-smoke.mjs   # 宿主 API：12 个端点 + 白名单 + 越界 + 读写 + 编译 + PDF meta/栅格化（26）
-node test/client-smoke.mjs   # 浏览器半侧：bundle/右侧栏注册 + SSR 渲染 + 词法 + PDF 预览（89）
+node test/server-smoke.mjs   # 宿主 API：13 个端点 + 白名单 + 越界 + 读写 + 编译 + PDF meta/栅格化 + asset（29）
+node test/client-smoke.mjs   # 浏览器半侧：bundle/右侧栏注册 + SSR 渲染 + 词法 + PDF 预览 + 编辑器（97）
 node test/live-api.mjs       # 对正在运行的 DSH 打真实 HTTP（端口取 DSH_WEB_URL）
 ```
 
-合计 **12 + 26 + 89 = 127** 项。
+合计 **12 + 29 + 97 = 138** 项。
 
 `client-smoke` 用本地 DSH 源码 checkout 里的 React；找不到就跳过（可设 `DSH_CHECKOUT`）。
 
@@ -177,14 +190,16 @@ lib/index.js        宿主入口：5 个工具 + 注册 /moling/api 路由
 lib/server.js       与传输无关的操作表（createPanelCore）+ /moling/api 适配器
 lib/latex.js        引擎探测、编译流程、日志解析、辅助文件清理、大纲解析
 lib/synctex.js      SyncTeX 正反向
-lib/client.js       浏览器半侧：右侧栏标签类型 + 正文（模块级 store、目录树、多标签、日志/PDF）
+lib/client.js       浏览器半侧：右侧栏标签类型 + 正文（模块级 store、目录树、多标签、日志/PDF、编辑器）
+lib/vendor/cm6.js   打包好的编辑器内核（CodeMirror 6，挂在 window.__molingCM）
+lib/vendor/entry.js 内核源码；BUILD.md 是重建步骤
 cordis.patch.yml    本组合包的 loader patch 层
 ```
 
 ## 已知差距
 
-- 编辑器是纯 `<textarea>` + 自研词法高亮（无折叠/多光标），**没有 SyncTeX 点击跳转**（`latex_synctex` 工具本身可用，只是没接到双击/单击上）。
-- 大文件（数千行）开软换行时，仍是原生 textarea 在每次按键后重排全文；「换行」关掉可明显减负，彻底解需要视口虚拟化。
+- **没有 SyncTeX 点击跳转**（`latex_synctex` 工具本身可用，只是没接到双击/单击上）。
+- 内核脚本（395 KB）加载完成后才切到 CodeMirror；在此之前用回退编辑器顶着（同源本地请求，实际很快）。
 - PDF 预览的图片按栏宽等比缩放：栏宽超过该 dpi 的页面像素宽时会略糊（拉窄栏或把清晰度调到「高」）。
 - 视觉验证需人工确认：面板在真实页面里的观感（亮/暗主题、窄栏换行）由使用者过目，自测只覆盖注册与数据链路。
 

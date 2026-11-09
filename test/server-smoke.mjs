@@ -187,7 +187,22 @@ console.log('6) 显式打开目录 / 按绝对路径打开文件')
   rmSync(stray, { recursive: true, force: true })
 }
 
-console.log('7) 错误处理')
+console.log('7) 编辑器内核资源（asset 端点）')
+{
+  const js = await call('GET', 'asset?name=cm6.js')
+  const body = js.bytes.toString('utf8')
+  js.status === 200 && js.type.startsWith('application/javascript') && body.includes('__molingCM')
+    ? ok('asset 发出编辑器内核', `${Math.round(js.bytes.length / 1024)} KB`)
+    : bad('asset', `status=${js.status} type=${js.type} len=${js.bytes.length}`)
+
+  const traversal = await call('GET', 'asset?name=../package.json')
+  traversal.status === 400 ? ok('拒绝越界资源名') : bad('越界资源名未被拒', String(traversal.status))
+
+  const missing = await call('GET', 'asset?name=nope.js')
+  missing.status === 400 && missing.json && missing.json.ok === false ? ok('不存在的资源报错') : bad('缺资源未报错')
+}
+
+console.log('8) 错误处理')
 {
   const unknown = await call('POST', 'nope', {})
   unknown.status === 404 && unknown.json.ok === false ? ok('未知端点 404') : bad('未知端点', String(unknown.status))

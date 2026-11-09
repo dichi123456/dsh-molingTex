@@ -411,5 +411,41 @@ try {
   bad('空工作台测试抛错', String(error.message))
 }
 
+console.log('13) 编辑器：CodeMirror 内核 + 回退实现')
+try {
+  const store = bundle.__store
+  const render = () => ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
+  store.view = 'workbench'
+  store.tabs = [{ id: 't-ed', root: 'E:/p', rel: 'main.tex', name: 'main.tex', text: '\\section{a}\n\\begin{equation}x\\end{equation}\n% c', dirty: false }]
+  store.activeId = 't-ed'
+
+  const html = render()
+  const assetUrl = bundle.__kernelAssetUrl()
+  const checks = [
+    ['内核地址走 /moling/api/asset', assetUrl.startsWith('/moling/api/asset?name=cm6.js')],
+    ['内核地址带版本号', /[?&]v=\d/.test(assetUrl)],
+    ['没内核时退回 textarea', html.includes('<textarea')],
+    ['回退实现仍有语法着色', html.includes('dsw-alias-brand-primary')],
+    ['回退实现仍有行号 class', html.includes('ml-hl-num')],
+    ['编辑器容器在位', html.includes('ml-editor')],
+    ['编辑器跳转桥可注册', typeof bundle.__editorBridge === 'object' && 'jumpTo' in bundle.__editorBridge]
+  ]
+  for (const [label, passed] of checks) passed ? ok(label) : bad(label)
+
+  // 回退编辑器在 CodeMirror 存在时应让路（区域组件按内核状态切换）
+  globalThis.window.__molingCM = { create() {}, destroy() {}, setWrap() {}, setDoc() {}, gotoLine() {} }
+  const withKernel = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(bundle.__EditorArea, { tab: store.tabs[0], store: store }))
+  delete globalThis.window.__molingCM
+  withKernel.includes('ml-cm') && !withKernel.includes('<textarea')
+    ? ok('有内核时挂载 CodeMirror 宿主')
+    : bad('有内核时没切到 CodeMirror', withKernel.slice(0, 120))
+
+  store.tabs = []
+  store.activeId = null
+} catch (error) {
+  bad('编辑器测试抛错', String(error.message))
+}
+
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)
 process.exit(failures === 0 ? 0 : 1)
