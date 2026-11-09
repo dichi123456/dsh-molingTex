@@ -386,5 +386,30 @@ try {
   bad('PDF 预览测试抛错', String(error.message))
 }
 
+console.log('12) 空工作台不炸（没有打开的 tex 时 textarea 不存在）')
+try {
+  const store = bundle.__store
+  const render = () => ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
+  store.view = 'workbench'
+  store.tabs = []
+  store.activeId = null
+  store.pdfRel = ''
+  store.pdfRoot = ''
+  store.error = ''
+
+  let html = ''
+  let failure = null
+  try { html = render() } catch (error) { failure = error }
+  const checks = [
+    ['无标签也能渲染工作台', !failure],
+    ['给出预览占位提示', !failure && html.includes('编译成功后在这里预览 PDF')],
+    ['工具栏仍在（首页/编译）', !failure && html.includes('首页') && html.includes('编译')],
+    ['有错误兜底边界（不会再整块空白）', bundle.__hasBoundary === true]
+  ]
+  for (const [label, passed] of checks) passed ? ok(label) : bad(label, failure ? String(failure.message) : '')
+} catch (error) {
+  bad('空工作台测试抛错', String(error.message))
+}
+
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)
 process.exit(failures === 0 ? 0 : 1)
