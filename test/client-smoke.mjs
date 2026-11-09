@@ -525,11 +525,14 @@ try {
   ]
   for (const [label, passed] of checks) passed ? ok(label) : bad(label, label.includes('百分比') ? String(percent(100, 595.276)) : '')
 
-  // 右键菜单：给出行号后应渲染出「定位到 PDF 位置」
+  // 右键菜单：基础编辑功能 + 定位
   store.menu = { x: 40, y: 60, line: 3 }
   const menuHtml = render()
   const menuOk = menuHtml.includes('定位到 PDF 位置（第 3 行）') && menuHtml.includes('position:fixed')
-  menuOk ? ok('右键菜单渲染「定位到 PDF 位置」') : bad('右键菜单没渲染', menuHtml.slice(-200))
+  menuOk ? ok('右键菜单渲染「定位到 PDF 位置」') : bad('右键菜单没渲染', menuHtml.slice(-300))
+  const baseItems = ['撤销', '重做', '剪切', '复制', '粘贴', '全选']
+  const missing = baseItems.filter((label) => !menuHtml.includes(label))
+  missing.length === 0 ? ok('右键菜单带基础编辑功能') : bad('缺基础菜单项', missing.join('/'))
   store.menu = null
 
   store.pdfZoom = 1

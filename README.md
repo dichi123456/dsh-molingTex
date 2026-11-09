@@ -63,7 +63,7 @@ ctx.slots.inject('sidebar.right.pane.tab', () =>
 
 ### SyncTeX 双向定位
 
-- **源码 → PDF**：编辑器里**右键** → 菜单「定位到 PDF 位置（第 N 行）」→ `synctex view` 拿到 `{page,x,y}` → 右栏切到 PDF、滚到该页，黄色圆圈标出位置。
+- **源码 → PDF**：编辑器里**右键** → 菜单「定位到 PDF 位置（第 N 行）」→ `synctex view` 拿到 `{page,x,y}` → 右栏切到 PDF、滚到该页，黄色圆圈标出位置。右键菜单同时保留基础编辑功能：撤销/重做/剪切/复制/粘贴/全选（面板接管了原生菜单，这些要自己补）。
 - **PDF → 源码**：在预览页上**单击** → 点击处换算成 PDF 点（`px / dpi * 72`）→ `synctex edit` 拿到行号 → 编辑器跳到该行。
 - 结果写在**底部状态栏**（`第 6 行 → 第 1 页` / `PDF 第 1 页 → 源码第 10 行`）；失败也写在那里。
 - 前提：编译时带 `-synctex=1`（本插件的编译流程默认带），PDF 与 `.synctex.gz` 同目录。
@@ -184,11 +184,11 @@ plugin_manager install_bundle  E:\E_个人项目\Latex_APP\dsh-plugin-moling-lat
 node test/smoke.mjs          # 工具：注册 / 引擎识别 / status / outline / quick / 失败路径（12）
 node test/smoke.mjs --full   # 追加 full、中文 xelatex、SyncTeX、clean
 node test/server-smoke.mjs   # 宿主 API：14 个端点 + 白名单 + 越界 + 读写 + 编译 + PDF + asset + synctex（32）
-node test/client-smoke.mjs   # 浏览器半侧：bundle/槽位/SSR/词法/路径/PDF 预览/编辑器/顶栏与缩放（117）
+node test/client-smoke.mjs   # 浏览器半侧：bundle/槽位/SSR/词法/路径/PDF 预览/编辑器/顶栏与缩放（119）
 node test/live-api.mjs       # 对正在运行的 DSH 打真实 HTTP（端口取 DSH_WEB_URL）
 ```
 
-合计 **12 + 32 + 117 = 161** 项。
+合计 **12 + 32 + 119 = 163** 项。
 
 `client-smoke` 用本地 DSH 源码 checkout 里的 React；找不到就跳过（可设 `DSH_CHECKOUT`）。
 
