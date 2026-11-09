@@ -185,6 +185,10 @@ try {
   }]
   store.activeId = 't1'
   const html = ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
+  // 主编辑器是 CodeMirror（只在浏览器里挂载，SSR 渲染的是它的宿主 div）；
+  // 语法着色/行号/换行这些断言针对回退实现，直接渲染回退组件来验证。
+  const ed = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(bundle.__LegacyEditor, { tab: store.tabs[0], store: store }))
 
   const checks = [
     ['首页按钮', html.includes('首页')],
@@ -196,21 +200,22 @@ try {
     ['状态行', html.includes('就绪')],
     ['左右两栏（右栏 45.0%）', html.includes('width:45.0%')],
     ['tex/pdf 分隔条可拖动', html.includes('col-resize')],
-    ['渲染出 1~6 行行号', html.includes('data-line="1"') && html.includes('data-line="6"')],
-    ['命令着色（brand-primary）', html.includes('dsw-alias-brand-primary')],
-    ['环境名着色（state-error-primary）', html.includes('dsw-alias-state-error-primary')],
-    ['引用键着色（state-warn-primary）', html.includes('dsw-alias-state-warn-primary')],
-    ['数学着色（state-success-primary）', html.includes('dsw-alias-state-success-primary')],
-    ['注释着色（label-secondary）', html.includes('dsw-alias-label-secondary')],
-    ['章节行加粗', html.includes('font-weight:600')],
-    ['数学环境跨行传递（equation 内无未闭合）', !html.includes('undefined')],
-    ['textarea 软换行', html.includes('white-space:pre-wrap')],
-    ['行号与正文同偏移', html.includes('padding:6px 8px 6px 56px')],
+    ['挂载 CodeMirror 宿主', html.includes('ml-cm')],
+    ['渲染出 1~6 行行号', ed.includes('data-line="1"') && ed.includes('data-line="6"')],
+    ['命令着色（brand-primary）', ed.includes('dsw-alias-brand-primary')],
+    ['环境名着色（state-error-primary）', ed.includes('dsw-alias-state-error-primary')],
+    ['引用键着色（state-warn-primary）', ed.includes('dsw-alias-state-warn-primary')],
+    ['数学着色（state-success-primary）', ed.includes('dsw-alias-state-success-primary')],
+    ['注释着色（label-secondary）', ed.includes('dsw-alias-label-secondary')],
+    ['章节行加粗', ed.includes('font-weight:600')],
+    ['数学环境跨行传递（equation 内无未闭合）', !ed.includes('undefined')],
+    ['textarea 软换行', ed.includes('white-space:pre-wrap')],
+    ['行号与正文同偏移', ed.includes('padding:6px 8px 6px 56px')],
     ['已去掉路径输入行', !html.includes('回车打开')],
-    ['没有旧 gutter', !html.includes('width:34px')]
+    ['没有旧 gutter', !ed.includes('width:34px')]
   ]
   for (const [label, passed] of checks) passed ? ok(label) : bad(label)
-  console.log(`     渲染 HTML ${html.length} 字节`)
+  console.log(`     渲染 HTML ${html.length} 字节 / 回退编辑器 ${ed.length} 字节`)
 
   store.tabs = []
   store.activeId = null
@@ -302,7 +307,10 @@ try {
 console.log('10) 换行开关 + 滚动条宽度补偿（光标错位修复的守卫）')
 try {
   const store = bundle.__store
-  const render = () => ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
+  // 这些断言针对回退实现的样式（主编辑器是 CodeMirror，样式由内核自己带）
+  const render = () => ReactDOMServer.renderToStaticMarkup(
+    React.createElement(bundle.__LegacyEditor, { tab: store.tabs[0], store: store }))
+  const renderPanel = () => ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
   store.view = 'workbench'
   store.tabs = [{ id: 't-wrap', root: 'E:/x', rel: 'a.tex', name: 'a.tex', text: 'a\nb', dirty: false }]
   store.activeId = 't-wrap'
@@ -311,9 +319,10 @@ try {
   const onHtml = render()
   store.wrap = false
   const offHtml = render()
+  const panelHtml = renderPanel()
 
   const checks = [
-    ['换行开关按钮存在', onHtml.includes('换行')],
+    ['换行开关按钮存在', panelHtml.includes('换行')],
     ['换行开：pre-wrap', /white-space:pre-wrap/.test(onHtml)],
     ['换行关：white-space:pre', /white-space:pre(?!-wrap)/.test(offHtml)],
     ['换行关：word-break 复位', /word-break:normal/.test(offHtml)],
@@ -421,16 +430,36 @@ try {
 
   const html = render()
   const assetUrl = bundle.__kernelAssetUrl()
+  const withoutKernel = (function () {
+    // 模拟「内核不存在」：这时区域组件必须退回 textarea 实现
+    const saved = globalThis.window.__molingCM
+    delete globalThis.window.__molingCM
+    const markup = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(bundle.__EditorArea, { tab: store.tabs[0], store: store }))
+    globalThis.window.__molingCM = saved
+    return markup
+  })()
   const checks = [
+    ['内核已内联进 client.js', typeof globalThis.window.__molingCM === 'object'],
     ['内核地址走 /moling/api/asset', assetUrl.startsWith('/moling/api/asset?name=cm6.js')],
     ['内核地址带版本号', /[?&]v=\d/.test(assetUrl)],
-    ['没内核时退回 textarea', html.includes('<textarea')],
-    ['回退实现仍有语法着色', html.includes('dsw-alias-brand-primary')],
-    ['回退实现仍有行号 class', html.includes('ml-hl-num')],
+    ['默认挂载 CodeMirror 宿主', html.includes('ml-cm')],
+    ['没内核时退回 textarea', withoutKernel.includes('<textarea')],
+    ['回退实现仍有语法着色', withoutKernel.includes('dsw-alias-brand-primary')],
+    ['回退实现仍有行号 class', withoutKernel.includes('ml-hl-num')],
     ['编辑器容器在位', html.includes('ml-editor')],
     ['编辑器跳转桥可注册', typeof bundle.__editorBridge === 'object' && 'jumpTo' in bundle.__editorBridge]
   ]
   for (const [label, passed] of checks) passed ? ok(label) : bad(label)
+
+  // 回退编辑器的根节点必须绝对铺满：以前套了一层 flex:1，父级不是 flex 容器 → 高度 0 → 整个编辑区空白
+  const legacy = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(bundle.__LegacyEditor, { tab: store.tabs[0], store: store }))
+  const legacyFilled = /position:absolute;inset:0/.test(legacy)
+  const legacyCollapsed = /flex:1;position:relative/.test(legacy)
+  legacyFilled && !legacyCollapsed
+    ? ok('回退编辑器根节点绝对铺满（不会塌成 0 高）')
+    : bad('回退编辑器根节点样式不对', legacy.slice(0, 140))
 
   // 回退编辑器在 CodeMirror 存在时应让路（区域组件按内核状态切换）
   globalThis.window.__molingCM = { create() {}, destroy() {}, setWrap() {}, setDoc() {}, gotoLine() {} }
@@ -445,6 +474,52 @@ try {
   store.activeId = null
 } catch (error) {
   bad('编辑器测试抛错', String(error.message))
+}
+
+console.log('14) 顶栏按钮 / 编译下拉 / PDF 缩放与定位环')
+try {
+  const store = bundle.__store
+  const render = () => ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
+  store.view = 'workbench'
+  store.pane = 'pdf'
+  store.tabs = [{ id: 't-ux', root: 'E:/p', rel: 'main.tex', name: 'main.tex', text: 'a', dirty: true }]
+  store.activeId = 't-ux'
+  store.pdfRel = 'main.pdf'
+  store.pdfRoot = 'E:/p'
+  store.pdfRev = '99'
+  store.pdfPages = 2
+  store.pdfRaster = true
+  store.pdfDpi = 96
+  store.pdfZoom = 2
+  store.syncMark = { page: 1, x: 100, y: 200 }
+  store.pdfPageSize = { width: 595.276, height: 841.89 }
+
+  const html = render()
+  const percent = bundle.__syncPercent
+  const checks = [
+    ['顶栏有「换行」', html.includes('>换行<')],
+    ['顶栏有「保存」', html.includes('>保存<')],
+    ['顶栏有「日志」', html.includes('>日志<') || /日志 \(\d\)/.test(html)],
+    ['编译下拉三合一', html.includes('完整编译') && html.includes('快速编译') && html.includes('从头编译')],
+    ['不再有单独的模式下拉', !html.includes('>完整<')],
+    ['缩放到 200% 时页面宽度翻倍', html.includes('width:200.00%')],
+    ['显示缩放百分比', html.includes('200%')],
+    ['定位环渲染在页面上', html.includes('border-radius:50%')],
+    ['定位环按页面尺寸换算百分比', percent(100, 595.276) === '16.799%' && percent(200, 841.89) === '23.756%'],
+    ['页面可点击定位（crosshair 光标）', html.includes('crosshair')],
+    ['编译方式常量是三档', bundle.__COMPILE_MODES.map((x) => x[0]).join() === 'full,quick,clean']
+  ]
+  for (const [label, passed] of checks) passed ? ok(label) : bad(label, label.includes('百分比') ? String(percent(100, 595.276)) : '')
+
+  store.pdfZoom = 1
+  store.syncMark = null
+  store.pdfPageSize = null
+  store.pdfRel = ''
+  store.pdfPages = 0
+  store.tabs = []
+  store.activeId = null
+} catch (error) {
+  bad('顶栏/缩放测试抛错', String(error.message))
 }
 
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)

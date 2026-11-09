@@ -1,12 +1,14 @@
 # 编辑器内核（CodeMirror 6）
 
-`cm6.js` 是本目录里唯一被打包好的产物，`entry.js` 是它的源码。插件在浏览器里用
+`cm6.js` 是打包产物，`entry.js` 是它的源码。
 
-```
-/moling/api/asset?name=cm6.js&v=<KERNEL_VERSION>
-```
+**交付方式：内联**。`cm6.js` 由 `inline-kernel.cjs` 拼进 `lib/client.js` 末尾
+（末尾带常量 `KERNEL_VERSION` 与注释标记，重复执行会先切掉旧内核）。这样浏览器加载
+client.js 时就注册好 `window.__molingCM`，不需要额外网络请求、不需要重启 DSH、
+也没有 CSP 拦截动态脚本的风险。
 
-把它当普通 `<script>` 加载，加载完挂在 `window.__molingCM` 上（见 `entry.js` 末尾）。
+`lib/client.js` 里的 `loadEditorKernel()` 仍保留为兜底/调试路径（走宿主的
+`/moling/api/asset?name=cm6.js`）；内核已内联时它会直接短路，不会真的发请求。
 
 ## 重新构建
 
@@ -17,13 +19,16 @@ npm i codemirror@^6 @codemirror/state @codemirror/view @codemirror/commands \
       @codemirror/language @codemirror/search @codemirror/legacy-modes @lezer/highlight
 npm i -D esbuild
 
-# entry.js 从本目录拷过来
-cp ../entry.js .
+cp <插件目录>/lib/vendor/entry.js .
 npx esbuild entry.js --bundle --format=iife --minify --target=chrome110 --outfile=cm6.js
+
 cp cm6.js <插件目录>/lib/vendor/cm6.js
+cd <插件目录>
+node lib/vendor/inline-kernel.cjs          # 内联进 lib/client.js
 ```
 
-然后把 `lib/client.js` 里的 `KERNEL_VERSION` 加一（打掉浏览器缓存），重开 DSH。
+改完 `lib/client.js` 走 HMR：**刷新页面即可，不用重开 DSH**。
+（`KERNEL_VERSION` 也顺手加一，供走 asset 端点调试时打掉浏览器缓存。）
 
 ## 为什么不用 `@codemirror/lang-latex`
 

@@ -148,6 +148,31 @@ console.log('5) 编译 → PDF → 清理')
 
     const wrongPage = await call('GET', 'pdf-page' + query.replace('page=1', 'page=999'))
     wrongPage.status >= 400 && wrongPage.json && wrongPage.json.ok === false ? ok('不存在的页报错') : bad('越界页码未报错', String(wrongPage.status))
+
+    // SyncTeX：源码行 → PDF 坐标 → 再反查回源码行（面板的双向定位走这两个方向）
+    const forward = await call('POST', 'synctex', {
+      direction: 'forward', root: fixtures, file: 'hello-en.tex', pdf: value.pdfRel, line: 6
+    })
+    const forwardValue = forward.json && forward.json.ok ? forward.json.value : null
+    forwardValue && forwardValue.success && forwardValue.page >= 1
+      ? ok('synctex 正向', `第 6 行 → 第 ${forwardValue.page} 页 (${forwardValue.x}, ${forwardValue.y})`)
+      : bad('synctex 正向', JSON.stringify(forward.json).slice(0, 160))
+
+    if (forwardValue && forwardValue.success) {
+      const backward = await call('POST', 'synctex', {
+        direction: 'backward', root: fixtures, file: 'hello-en.tex', pdf: value.pdfRel,
+        page: forwardValue.page, x: forwardValue.x, y: forwardValue.y
+      })
+      const backwardValue = backward.json && backward.json.ok ? backward.json.value : null
+      backwardValue && backwardValue.success && backwardValue.line >= 1
+        ? ok('synctex 反向', `第 ${forwardValue.page} 页 → 源码第 ${backwardValue.line} 行`)
+        : bad('synctex 反向', JSON.stringify(backward.json).slice(0, 160))
+    }
+
+    const noPdf = await call('POST', 'synctex', {
+      direction: 'forward', root: fixtures, file: 'hello-en.tex', pdf: 'missing.pdf', line: 1
+    })
+    noPdf.status >= 400 && noPdf.json && noPdf.json.ok === false ? ok('缺 PDF 时明确报错') : bad('缺 PDF 未报错')
   }
   const clean = await call('POST', 'clean', { root: fixtures, file: 'hello-en.tex' })
   clean.json && clean.json.ok && Array.isArray(clean.json.value.deleted) ? ok('clean', `${clean.json.value.deleted.length} 个`) : bad('clean', JSON.stringify(clean.json))

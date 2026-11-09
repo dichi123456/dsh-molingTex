@@ -38,10 +38,10 @@ ctx.slots.inject('sidebar.right.pane.tab', () =>
 | 启动页 | 最近 | 一行一条：`工作区`/`文件` 类型标签 + 名称 + 右对齐路径；点工作区进项目，点文件直接打开 |
 | 启动页 | 模板 | 一张卡片：`新建中文文档`（ctexart 骨架：标题/作者/日期/一节正文） |
 | 启动页 | 提示栏 | 快捷键速查、TeX 环境（版本 + bin 目录）、数据通道状态；窄的时候自动折到下方 |
-| 工作台 | 顶部条 | `首页`（回启动页）、工作区下拉、`目录`、`树`（浮层文件树）、`保存`、`编译` |
+| 工作台 | 顶部条 | `首页`（回启动页）、工作区下拉、`目录`、`树`（浮层文件树）、`日志`、`换行`、`保存`，右端是**编译下拉**（完整/快速/从头，选哪项立刻按该方式编译） |
 | 工作台 | 左栏 | 标签条（多标签、未保存 ●、`×` 关闭）+ 编辑器（LaTeX 语法高亮、行号、软换行；`F5` 编译、`Ctrl+S` 保存、`Tab` 缩进） |
 | 工作台 | 分栏 | tex 与 pdf 之间是**可拖动分隔条**（20%–80%），宽度记进 localStorage |
-| 工作台 | 右栏 | `日志` / `PDF` 切换；日志里错误行可点击跳到源码行；PDF 内嵌预览（blob URL），`新标签` 可单独打开；引擎/模式/清理在右栏头部；**编译状态与错误显示在预览区底部** |
+| 工作台 | 右栏 | `日志` / `PDF` 切换；日志里错误行可点击跳到源码行；PDF 是**逐页图片**（可 Ctrl+滚轮缩放），**单击页面可定位回源码行**；引擎/清晰度/清理/新标签在右栏头部；**编译状态与错误显示在预览区底部** |
 | 工作台 | 浮层 | 文件树抽屉：浮在编辑区上（不占列），**右边框可拖动**（30%–100%），点外部/`Esc`/`×` 关闭，选中文件自动收起 |
 | 工作台 | 状态行 | 数据通道指示灯、忙闲、TeX 是否就绪、当前文件 |
 
@@ -51,7 +51,7 @@ ctx.slots.inject('sidebar.right.pane.tab', () =>
 
 ### 编辑器
 
-**CodeMirror 6**（`lib/vendor/cm6.js`，宿主用 `/moling/api/asset?name=cm6.js` 发出来），要点：
+**CodeMirror 6**（内核已内联进 `lib/client.js` 末尾，源码在 `lib/vendor/`），要点：
 
 - **只渲染视口内的行**（虚拟化）：1435 行 / 142 KB 的论文，DOM 里只有 ~29 行、行号 ~30 个；实测**每次按键 1 ms**（原生 `<textarea>` 同文档要 17–23 ms）。
 - 光标、选区、折行都是编辑器自己画的 → 不存在「字形与光标错位」。
@@ -60,6 +60,13 @@ ctx.slots.inject('sidebar.right.pane.tab', () =>
 - 配色仍只用主题 token（`--dsw-alias-*`），亮/暗自动跟随。
 - **回退**：内核脚本加载失败（端点缺失、离线等）→ 自动退回旧实现（透明 `<textarea>` 叠高亮层），功能一样、大文件会慢。回退路径的两层宽度补偿：`textarea` 用 `scrollbar-gutter: stable` 永久预留滚动条槽，高亮层按探测到的滚动条宽度补 `padding-right`，两层内容宽度恒等（这是此前「删错字」的根治手段）。
 - 重新构建内核：见 `lib/vendor/BUILD.md`（源码在 `lib/vendor/entry.js`）。
+
+### SyncTeX 双向定位
+
+- **源码 → PDF**：编辑器里**双击某行** → `synctex view` 拿到 `{page,x,y}` → 右栏自动切到 PDF 并滚到该页，黄色圆圈标出位置。
+- **PDF → 源码**：在预览页上**单击** → 把点击处换算成 PDF 点（`px / dpi * 72`）→ `synctex edit` 拿到行号 → 编辑器跳到该行。
+- 前提：编译时带 `-synctex=1`（本插件的编译流程默认带），PDF 与 `.synctex.gz` 同目录。
+- 状态写在预览区底部：`定位到第 N 页` / `PDF 第 N 页 → 源码第 M 行`；失败会写原因（如 `.synctex.gz` 缺失）。
 
 ### 语法高亮（回退实现 / 分词逻辑）
 
@@ -107,6 +114,7 @@ fetch('/moling/api/tree', { method: 'POST', headers: { 'content-type': 'applicat
 | `pdf` | `{root,path,meta?}` | 整份 byte 数 + `mtime` + `pages`（页数）+ `raster`；不带 `meta` 时另给 `base64` |
 | `pdf-page` | `{root,path,page,dpi}` | 第 `page` 页的 **PNG 二进制**（GET 也支持：`?root=&path=&page=&dpi=`）；dpi 夹在 48–200 |
 | `asset` | `{name}` | 发 `lib/vendor/` 下的浏览器资源（目前只有 `cm6.js`）；只认 `[A-Za-z0-9._-]+\.(js\|css)` |
+| `synctex` | `{direction,root,file,pdf,line}` / `{direction:'backward',root,file,pdf,page,x,y}` | SyncTeX 双向：源码行 → `{page,x,y}`；PDF 点 → `{line,file}` |
 
 ### PDF 预览：降分辨率图片，而不是浏览器内置阅读器
 
@@ -174,12 +182,12 @@ plugin_manager install_bundle  E:\E_个人项目\Latex_APP\dsh-plugin-moling-lat
 ```bash
 node test/smoke.mjs          # 工具：注册 / 引擎识别 / status / outline / quick / 失败路径（12）
 node test/smoke.mjs --full   # 追加 full、中文 xelatex、SyncTeX、clean
-node test/server-smoke.mjs   # 宿主 API：13 个端点 + 白名单 + 越界 + 读写 + 编译 + PDF meta/栅格化 + asset（29）
-node test/client-smoke.mjs   # 浏览器半侧：bundle/右侧栏注册 + SSR 渲染 + 词法 + PDF 预览 + 编辑器（97）
+node test/server-smoke.mjs   # 宿主 API：14 个端点 + 白名单 + 越界 + 读写 + 编译 + PDF + asset + synctex（32）
+node test/client-smoke.mjs   # 浏览器半侧：bundle/槽位/SSR/词法/路径/PDF 预览/编辑器/顶栏与缩放（112）
 node test/live-api.mjs       # 对正在运行的 DSH 打真实 HTTP（端口取 DSH_WEB_URL）
 ```
 
-合计 **12 + 29 + 97 = 138** 项。
+合计 **12 + 32 + 112 = 156** 项。
 
 `client-smoke` 用本地 DSH 源码 checkout 里的 React；找不到就跳过（可设 `DSH_CHECKOUT`）。
 
