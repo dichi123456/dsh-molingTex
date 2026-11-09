@@ -92,7 +92,23 @@ fetch('/moling/api/tree', { method: 'POST', headers: { 'content-type': 'applicat
 | `write-file` | `{root,path,content}` | 写文本 |
 | `compile` | `{root,file,mode,engine}` | 编译，返回错误/警告/日志 + `pdfRel`/`pdfMtime` |
 | `clean` | `{root,file}` | 清辅助文件 |
-| `pdf` | `{root,path}` | PDF 的 base64（面板转 blob URL 内嵌预览） |
+| `pdf` | `{root,path,meta?}` | 整份 byte 数 + `mtime` + `pages`（页数）+ `raster`；不带 `meta` 时另给 `base64` |
+| `pdf-page` | `{root,path,page,dpi}` | 第 `page` 页的 **PNG 二进制**（GET 也支持：`?root=&path=&page=&dpi=`）；dpi 夹在 48–200 |
+
+### PDF 预览：降分辨率图片，而不是浏览器内置阅读器
+
+预览默认是「**一页一张 PNG**」，由宿主用 TeX Live 自带的 poppler（`pdftoppm`）按所选 dpi 栅格化，
+前端只 `<img loading="lazy">` 等比缩放。对比内置 PDF 阅读器少掉三笔开销：
+
+| 旧（blob + 内置阅读器） | 现在（栅格化图片） |
+| --- | --- |
+| `.pdf` 整份读进内存再转 base64（48MB 的 PDF → 64MB 字符串） | 只按页取图，取多少看滚到哪 |
+| PDFium 按**设备像素**渲染整页，滚动/缩放时重绘 | 浏览器只解码 + 缩放位图，不做 PDF 解析 |
+| 只能靠缩放间接影响像素量 | dpi 与清晰度**直接解耦**：72 / 96 / 144 三档 |
+
+- 缓存：`%TEMP%\dsh-moling-pdf\<sha1>.png`，键 = 绝对路径 + PDF `mtime` + dpi + 页码；重新编译换了 mtime 自然换键。前端 URL 里带 `v=<mtime>`，所以能 `immutable` 长缓存。
+- 回退：找不到 `pdftoppm`，或某一页取图失败 → 自动退回内置阅读器（`pdf` 端点给 base64 → blob → iframe），不黑屏。
+- 代价：栅格化发生在编译后首次预览，单页约 40–80ms（进程启动占大头），之后走缓存直接命中。
 
 ## Agent 工具
 
@@ -143,11 +159,14 @@ plugin_manager install_bundle  E:\E_个人项目\Latex_APP\dsh-plugin-moling-lat
 ## 自测
 
 ```bash
-node test/smoke.mjs          # 工具：注册 / 引擎识别 / status / outline / quick / 失败路径
+node test/smoke.mjs          # 工具：注册 / 引擎识别 / status / outline / quick / 失败路径（12）
 node test/smoke.mjs --full   # 追加 full、中文 xelatex、SyncTeX、clean
-node test/server-smoke.mjs   # 宿主 API：11 个端点 + 白名单 + 越界 + 读写 + 编译 + PDF + 打开目录/文件
-node test/client-smoke.mjs   # 浏览器半侧：bundle 注册 + 右侧栏类型/槽位注册 + SSR 渲染
+node test/server-smoke.mjs   # 宿主 API：12 个端点 + 白名单 + 越界 + 读写 + 编译 + PDF meta/栅格化（26）
+node test/client-smoke.mjs   # 浏览器半侧：bundle/右侧栏注册 + SSR 渲染 + 词法 + PDF 预览（85）
+node test/live-api.mjs       # 对正在运行的 DSH 打真实 HTTP（端口取 DSH_WEB_URL）
 ```
+
+合计 **12 + 26 + 85 = 123** 项。
 
 `client-smoke` 用本地 DSH 源码 checkout 里的 React；找不到就跳过（可设 `DSH_CHECKOUT`）。
 
@@ -164,8 +183,9 @@ cordis.patch.yml    本组合包的 loader patch 层
 
 ## 已知差距
 
-- 编辑器是纯 `<textarea>` + 行号槽：**没有语法高亮**，也**没有 SyncTeX 点击跳转**（`latex_synctex` 工具本身可用，只是没接到双击/单击上）。
-- 右栏窄：不做左右分栏，PDF/日志在底部切换。
+- 编辑器是纯 `<textarea>` + 自研词法高亮（无折叠/多光标），**没有 SyncTeX 点击跳转**（`latex_synctex` 工具本身可用，只是没接到双击/单击上）。
+- 大文件（数千行）开软换行时，仍是原生 textarea 在每次按键后重排全文；「换行」关掉可明显减负，彻底解需要视口虚拟化。
+- PDF 预览的图片按栏宽等比缩放：栏宽超过该 dpi 的页面像素宽时会略糊（拉窄栏或把清晰度调到「高」）。
 - 视觉验证需人工确认：面板在真实页面里的观感（亮/暗主题、窄栏换行）由使用者过目，自测只覆盖注册与数据链路。
 
 ## 排错
@@ -176,4 +196,5 @@ cordis.patch.yml    本组合包的 loader patch 层
 | 面板打开后状态灯是红的 | 数据通道异常：确认 `GET /moling/api/ping` 能返回 `{"ok":true,...}`；否则说明宿主半侧没装载 |
 | 导入文件夹后列表是空的 | 列表区会写原因：`不在允许范围内` → 用「目录」打开或写进 `config.allowedRoots`；`另有 N 个其它文件` → 该目录确实没有支持的类型 |
 | 编译报「找不到引擎」 | 让 Agent 跑 `latex_status`，或在 config 里指 `texlivePath` |
-| PDF 视图空白 | 该环境可能禁用内建 PDF 查看器；点「新标签」用系统/浏览器打开 |
+| PDF 预览空白 | 先看底部状态条：写「降分辨率预览不可用」= 取图失败（退回了内置阅读器）；两样都空则该环境禁用了 PDF 查看器，点「新标签」用系统/浏览器打开 |
+| 刷新页面后 PDF 预览没变 | `lib/server.js` 改了要**重开 DSH**（`pdf-page` 是新端点）；只改 `lib/client.js` 才是刷新即可 |

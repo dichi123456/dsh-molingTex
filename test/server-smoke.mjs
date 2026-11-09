@@ -3,8 +3,8 @@
  *
  * 用假 req/res 直接驱动 createPanelHandler，覆盖：
  *   探活 / TeX 状态 / 工作区 / 文件树（嵌套 + 扁平）/ 白名单拒绝 / 路径越界 /
- *   读文件 / 写文件 / 非文本拒绝 / 编译 / PDF base64 / 清理 /
- *   显式打开目录（open-root）/ 按绝对路径打开文件（open-file）/ 未知端点 / 坏 JSON
+ *   读文件 / 写文件 / 非文本拒绝 / 编译 / PDF base64 / PDF 元信息 / 单页栅格化 /
+ *   清理 / 显式打开目录（open-root）/ 按绝对路径打开文件（open-file）/ 未知端点 / 坏 JSON
  *
  *   node test/server-smoke.mjs
  */
@@ -28,7 +28,7 @@ const handler = createPanelHandler({
   getTexEnv: () => ({ texlivePath: null, engine: 'auto', timeoutMs: 120000 })
 })
 
-/** 发一个假请求；返回 { status, json, raw }。raw 用于故意发坏 JSON。 */
+/** 发一个假请求；返回 { status, json, raw, bytes, type }。raw 用于故意发坏 JSON。 */
 async function call(method, endpoint, body, raw) {
   const payload = raw !== undefined ? Buffer.from(String(raw), 'utf8')
     : body === undefined ? Buffer.from('', 'utf8') : Buffer.from(JSON.stringify(body), 'utf8')
@@ -36,16 +36,20 @@ async function call(method, endpoint, body, raw) {
   req.method = method
   req.url = API_PREFIX + '/' + endpoint
 
-  const captured = { status: 0, chunks: [] }
+  const captured = { status: 0, chunks: [], type: '' }
   const res = {
-    writeHead(status) { captured.status = status },
+    writeHead(status, headers) {
+      captured.status = status
+      captured.type = (headers && (headers['content-type'] || headers['Content-Type'])) || ''
+    },
     end(chunk) { if (chunk !== undefined) captured.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8')) }
   }
   await handler(req, res)
-  const text = Buffer.concat(captured.chunks).toString('utf8')
+  const bytes = Buffer.concat(captured.chunks)
+  const text = bytes.toString('utf8')
   let json = null
   try { json = JSON.parse(text) } catch { json = null }
-  return { status: captured.status, json, raw: text }
+  return { status: captured.status, json, raw: text, bytes, type: captured.type }
 }
 
 console.log('1) 探活 / 状态 / 工作区')
@@ -116,6 +120,34 @@ console.log('5) 编译 → PDF → 清理')
     const pdf = await call('POST', 'pdf', { root: fixtures, path: value.pdfRel })
     const magic = pdf.json && pdf.json.ok ? Buffer.from(pdf.json.value.base64, 'base64').slice(0, 4).toString('latin1') : ''
     magic === '%PDF' ? ok('pdf 返回 base64', `${pdf.json.value.bytes} 字节`) : bad('pdf', JSON.stringify(pdf.json).slice(0, 120))
+
+    // 元信息模式：面板走图片预览时只要页数 + mtime，不要整份 base64
+    const meta = await call('POST', 'pdf', { root: fixtures, path: value.pdfRel, meta: true })
+    if (!meta.json || !meta.json.ok) bad('pdf meta', JSON.stringify(meta.json).slice(0, 160))
+    else {
+      const info = meta.json.value
+      info.pages >= 1 && !('base64' in info)
+        ? ok('pdf meta 只回元信息', `${info.pages} 页 / raster=${info.raster}`)
+        : bad('pdf meta 内容不对', JSON.stringify(Object.keys(info)))
+    }
+
+    // 单页栅格化：GET + 二进制 PNG；dpi 越低字节越少（这就是"降分辨率"的实际效果）
+    const query = `?root=${encodeURIComponent(fixtures)}&path=${encodeURIComponent(value.pdfRel)}&page=1`
+    const low = await call('GET', 'pdf-page' + query + '&dpi=48')
+    const high = await call('GET', 'pdf-page' + query + '&dpi=144')
+    const png = low.bytes.slice(0, 4).toString('latin1') === '\x89PNG'
+    png && low.type.startsWith('image/png')
+      ? ok('pdf-page 返回 PNG', `48dpi ${low.bytes.length} 字节 / 144dpi ${high.bytes.length} 字节`)
+      : bad('pdf-page', `type=${low.type} magic=${low.bytes.slice(0, 4).toString('hex')}`)
+    low.bytes.length > 0 && low.bytes.length < high.bytes.length
+      ? ok('低 dpi 图更小', `${Math.round(low.bytes.length / high.bytes.length * 100)}%`)
+      : bad('dpi 没影响体积', `${low.bytes.length} vs ${high.bytes.length}`)
+
+    const sameAgain = await call('GET', 'pdf-page' + query + '&dpi=48')
+    sameAgain.bytes.equals(low.bytes) ? ok('同参数命中缓存且结果一致') : bad('缓存结果不一致')
+
+    const wrongPage = await call('GET', 'pdf-page' + query.replace('page=1', 'page=999'))
+    wrongPage.status >= 400 && wrongPage.json && wrongPage.json.ok === false ? ok('不存在的页报错') : bad('越界页码未报错', String(wrongPage.status))
   }
   const clean = await call('POST', 'clean', { root: fixtures, file: 'hello-en.tex' })
   clean.json && clean.json.ok && Array.isArray(clean.json.value.deleted) ? ok('clean', `${clean.json.value.deleted.length} 个`) : bad('clean', JSON.stringify(clean.json))

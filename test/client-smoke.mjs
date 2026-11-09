@@ -268,5 +268,123 @@ try {
   bad('路径单元抛错', String(error.message))
 }
 
+console.log('9) 高亮行级缓存（打字不全量重排）')
+try {
+  const build = bundle.__buildHighlight
+  const lines = []
+  for (let i = 0; i < 2000; i++) lines.push(`Line ${i} \\cite{k${i}} and $x_${i}$`)
+  const doc1 = lines.join('\n')
+
+  const t0 = Date.now()
+  const first = build(doc1, 'tab-perf')
+  const buildMs = Date.now() - t0
+
+  // 改中间一行的一个字符（模拟打字）
+  lines[1000] = lines[1000] + 'z'
+  const doc2 = lines.join('\n')
+  const t1 = Date.now()
+  const second = build(doc2, 'tab-perf')
+  const editMs = Date.now() - t1
+
+  const caseList = [
+    ['元素数量不变', first.length === 2000 && second.length === 2000],
+    ['未改动的行复用同一元素', second[0] === first[0] && second[1999] === first[1999]],
+    ['被改的行重新构建', second[1000] !== first[1000]],
+    ['改一行远快于全量', editMs <= Math.max(5, buildMs)],
+    ['全量构建耗时可接受', buildMs < 2000]
+  ]
+  for (const [label, passed] of caseList) passed ? ok(label) : bad(label)
+  console.log(`     2000 行：全量 ${buildMs}ms / 单行编辑 ${editMs}ms`)
+} catch (error) {
+  bad('缓存测试抛错', String(error.message))
+}
+
+console.log('10) 换行开关 + 滚动条宽度补偿（光标错位修复的守卫）')
+try {
+  const store = bundle.__store
+  const render = () => ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
+  store.view = 'workbench'
+  store.tabs = [{ id: 't-wrap', root: 'E:/x', rel: 'a.tex', name: 'a.tex', text: 'a\nb', dirty: false }]
+  store.activeId = 't-wrap'
+
+  store.wrap = true
+  const onHtml = render()
+  store.wrap = false
+  const offHtml = render()
+
+  const checks = [
+    ['换行开关按钮存在', onHtml.includes('换行')],
+    ['换行开：pre-wrap', /white-space:pre-wrap/.test(onHtml)],
+    ['换行关：white-space:pre', /white-space:pre(?!-wrap)/.test(offHtml)],
+    ['换行关：word-break 复位', /word-break:normal/.test(offHtml)],
+    ['两层都用 overflow-wrap', /overflow-wrap:break-word/.test(onHtml)],
+    ['高亮层带 padding-right（预留滚动条）', /padding-right:\d+px/.test(onHtml)]
+  ]
+  for (const [label, passed] of checks) passed ? ok(label) : bad(label)
+
+  store.wrap = true
+  store.tabs = []
+  store.activeId = null
+} catch (error) {
+  bad('换行/滚动条测试抛错', String(error.message))
+}
+
+console.log('11) PDF 预览：降分辨率图片（不把整份 PDF 交给内置阅读器）')
+try {
+  const store = bundle.__store
+  const render = () => ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
+  store.view = 'workbench'
+  store.pane = 'pdf'
+  store.tabs = [{ id: 't-pdf', root: 'E:/p/paper', rel: 'main.tex', name: 'main.tex', text: 'x', dirty: false }]
+  store.activeId = 't-pdf'
+  store.pdfRoot = 'E:/p/paper'
+  store.pdfRel = 'main.pdf'
+  store.pdfRev = '1712345678'
+  store.pdfPages = 3
+  store.pdfRaster = true
+  store.pdfDpi = 96
+  store.pdfUrl = ''   // 走图片预览时不需要 blob
+
+  const html = render()
+  const pageUrl = bundle.__pdfPageUrl(1)
+  const checks = [
+    ['页数决定图片张数', (html.match(/<img /g) || []).length === 3],
+    ['单页地址走 /moling/api/pdf-page', pageUrl.startsWith('/moling/api/pdf-page?')],
+    ['带 dpi 参数', pageUrl.includes('dpi=96')],
+    ['带 mtime 版本号（可长期缓存）', pageUrl.includes('v=1712345678')],
+    ['首屏立即加载、其余懒加载', /loading="eager"/.test(html) && /loading="lazy"/.test(html)],
+    ['不再用 iframe 预览', !/<iframe/.test(html)],
+    ['清晰度三档 72/96/144', bundle.__DPI_CHOICES.map((choice) => choice.value).join() === '72,96,144'],
+    ['按加载前占位比例（防跳动）', /aspect-ratio:1\/1\.414/.test(html) || /aspect-ratio:1 \/ 1\.414/.test(html)]
+  ]
+  for (const [label, passed] of checks) passed ? ok(label) : bad(label)
+
+  // 中文目录要编码，否则 query 里的 & 与中文都会出问题
+  store.pdfRel = '论文/main.pdf'
+  const encoded = bundle.__pdfPageUrl(1)
+  encoded.includes(encodeURIComponent('论文/main.pdf')) && !encoded.includes('论文')
+    ? ok('中文路径按 encodeURIComponent 编码')
+    : bad('中文路径没编码', encoded)
+
+  // poppler 不可用 / 取图失败 → 回退浏览器内置阅读器
+  store.pdfRel = 'main.pdf'
+  store.pdfRaster = false
+  store.pdfUrl = 'blob:fake'
+  const fallback = render()
+  const fallbackOk = /<iframe/.test(fallback) && fallback.includes('blob:fake')
+  fallbackOk ? ok('回退路径仍是内置阅读器') : bad('回退路径没渲染 iframe')
+
+  store.pdfRaster = true
+  store.pdfUrl = ''
+  store.pdfPages = 0
+  store.pdfRel = ''
+  store.pdfRoot = ''
+  store.pdfRev = ''
+  store.tabs = []
+  store.activeId = null
+} catch (error) {
+  bad('PDF 预览测试抛错', String(error.message))
+}
+
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)
 process.exit(failures === 0 ? 0 : 1)
