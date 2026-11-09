@@ -38,7 +38,8 @@ ctx.slots.inject('sidebar.right.pane.tab', () =>
 | 启动页 | 最近 | 一行一条：`工作区`/`文件` 类型标签 + 名称 + 右对齐路径；点工作区进项目，点文件直接打开 |
 | 启动页 | 模板 | 一张卡片：`新建中文文档`（ctexart 骨架：标题/作者/日期/一节正文） |
 | 启动页 | 提示栏 | 快捷键速查、TeX 环境（版本 + bin 目录）、数据通道状态；窄的时候自动折到下方 |
-| 工作台 | 顶部条 | `首页`、工作区下拉、`目录`、`树`（浮层文件树）、`换行`、`保存`，右端是**分体编译按钮**：左边 3/4 显示当前编译方式（完整编译/快速编译/从头编译），点一下即按该方式编译；右边 1/4 小三角点开才切换方式（`F5` 同效） |
+| 工作台 | 顶部条 | `首页`、工作区下拉、`目录`、`树`（浮层文件树）、`换行`、`保存`、`提纲`，右端是**分体编译按钮**：左边 3/4 显示当前编译方式（完整编译/快速编译/从头编译），点一下即按该方式编译；右边 1/4 小三角点开才切换方式（`F5` 同效） |
+| 工作台 | 提纲 | 点 `提纲` → 编辑区**左下角浮出**章节列表（`\part`…`\paragraph`，按层级缩进 + 行号），点一条跳该行；解析在浏览器里做，不请求宿主 |
 | 工作台 | 左栏 | 标签条（多标签、未保存 ●、`×` 关闭）+ 编辑器（LaTeX 语法高亮、行号、软换行；`F5` 编译、`Ctrl+S` 保存、`Tab` 缩进） |
 | 工作台 | 分栏 | tex 与 pdf 之间是**可拖动分隔条**（20%–80%），宽度记进 localStorage |
 | 工作台 | 右栏 | `日志` / `PDF` 切换（也可在状态栏最右点）；日志里错误行可点击跳到源码行；PDF 是**逐页图片**（可 Ctrl+滚轮缩放），**单击页面可定位回源码行**；引擎/清晰度/缩放/清理/新标签在右栏头部；错误详情仍在预览区底部 |
@@ -183,12 +184,12 @@ plugin_manager install_bundle  E:\E_个人项目\Latex_APP\dsh-plugin-moling-lat
 ```bash
 node test/smoke.mjs          # 工具：注册 / 引擎识别 / status / outline / quick / 失败路径（12）
 node test/smoke.mjs --full   # 追加 full、中文 xelatex、SyncTeX、clean
-node test/server-smoke.mjs   # 宿主 API：14 个端点 + 白名单 + 越界 + 读写 + 编译 + PDF + asset + synctex（32）
-node test/client-smoke.mjs   # 浏览器半侧：bundle/槽位/SSR/词法/路径/PDF 预览/编辑器/顶栏与缩放（123）
+node test/server-smoke.mjs   # 宿主 API：15 个端点 + 白名单 + 越界 + 读写 + 编译 + PDF + asset + synctex + outline（34）
+node test/client-smoke.mjs   # 浏览器半侧：bundle/槽位/SSR/词法/路径/PDF/编辑器/顶栏/提纲（131）
 node test/live-api.mjs       # 对正在运行的 DSH 打真实 HTTP（端口取 DSH_WEB_URL）
 ```
 
-合计 **12 + 32 + 123 = 167** 项。
+合计 **12 + 34 + 131 = 177** 项。
 
 `client-smoke` 用本地 DSH 源码 checkout 里的 React；找不到就跳过（可设 `DSH_CHECKOUT`）。
 

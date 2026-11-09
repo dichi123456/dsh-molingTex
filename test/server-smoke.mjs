@@ -107,6 +107,17 @@ console.log('4) 读写文件')
 
   const reject = await call('POST', 'write-file', { root: fixtures, path: 'evil.exe', content: 'x' })
   reject.json && reject.json.ok === false ? ok('拒绝写非文本类型') : bad('非文本写入未被拒')
+
+  // 提纲：解析章节标题与行号（面板左下角浮层用）
+  const outline = await call('POST', 'outline', { root: fixtures, file: 'hello-en.tex' })
+  const sections = outline.json && outline.json.ok ? outline.json.value.sections : null
+  const intro = Array.isArray(sections) ? sections.find((item) => item.title === 'Introduction') : null
+  intro && intro.line === 12 && sections.some((item) => item.title === 'A nested heading')
+    ? ok('outline 解析章节', `${sections.length} 节，Introduction 在第 ${intro.line} 行`)
+    : bad('outline', JSON.stringify(outline.json).slice(0, 160))
+
+  const notTex = await call('POST', 'outline', { root: fixtures, path: 'evil.exe', file: 'evil.exe' })
+  notTex.status >= 400 ? ok('outline 拒绝非 tex') : bad('outline 非 tex 未拒')
 }
 
 console.log('5) 编译 → PDF → 清理')

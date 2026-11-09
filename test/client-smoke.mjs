@@ -553,6 +553,43 @@ try {
   store.notice = ''
   store.noticeOk = true
 
+  // 提纲浮层
+  store.outlineOpen = true
+  store.outline = {
+    rel: 'main.tex',
+    lines: 40,
+    labels: 2,
+    cites: 3,
+    sections: [
+      { level: 2, command: 'section', title: '引言', line: 3 },
+      { level: 3, command: 'subsection', title: '车辆模型', line: 12 }
+    ]
+  }
+  const outlineHtml = render()
+  const outlineChecks = [
+    ['顶栏有「提纲」按钮', outlineHtml.includes('>提纲<')],
+    ['浮层显示章节标题', outlineHtml.includes('引言') && outlineHtml.includes('车辆模型')],
+    ['浮层显示行号', outlineHtml.includes('>12<') || outlineHtml.includes('>3<')],
+    ['浮层贴左下角', outlineHtml.includes('bottom:8') && outlineHtml.includes('left:8')],
+    ['浮层可关闭', outlineHtml.includes('>×<')]
+  ]
+  for (const [label, passed] of outlineChecks) passed ? ok(label) : bad(label)
+
+  // 提纲解析是客户端做的（不依赖宿主端点）
+  const parsed = bundle.__parseOutlineText([
+    '% \\section{注释里的不算}',
+    '\\section{引言}',
+    '\\label{sec:intro}',
+    '\\subsection{车辆模型}',
+    '\\subsubsection{轮胎}'
+  ].join('\n'))
+  const titles = parsed.sections.map((item) => item.title).join('|')
+  titles === '引言|车辆模型|轮胎' && parsed.sections[1].line === 4
+    ? ok('客户端提纲解析（跳过注释、层级与行号）', titles)
+    : bad('提纲解析不对', JSON.stringify(parsed.sections))
+  store.outlineOpen = false
+  store.outline = null
+
   store.pdfZoom = 1
   store.syncMark = null
   store.pdfPageSize = null
