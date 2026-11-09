@@ -535,6 +535,22 @@ try {
   missing.length === 0 ? ok('右键菜单带基础编辑功能') : bad('缺基础菜单项', missing.join('/'))
   store.menu = null
 
+  // 编译结果条：底部状态栏居中，成功绿、失败红
+  store.notice = '编译成功 · pdflatex · 3.1s · 2 趟'
+  store.noticeOk = true
+  const okHtml = render()
+  store.noticeOk = false
+  const failHtml = render()
+  const noticeChecks = [
+    ['结果条居中（绝对定位 + translateX）', okHtml.includes('translateX(-50%)') && okHtml.includes('left:50%')],
+    ['成功是绿色', okHtml.includes('编译成功') && okHtml.includes('state-success-primary')],
+    ['失败是红色', failHtml.includes('state-error-primary')],
+    ['结果条只出现一次（不再挤在预览区底部）', (okHtml.match(/>编译成功 · pdflatex/g) || []).length === 1]
+  ]
+  for (const [label, passed] of noticeChecks) passed ? ok(label) : bad(label)
+  store.notice = ''
+  store.noticeOk = true
+
   store.pdfZoom = 1
   store.syncMark = null
   store.pdfPageSize = null
