@@ -513,7 +513,7 @@ try {
       html.includes('width:75%') && html.includes('width:25%') && html.indexOf('width:75%') < html.indexOf('width:25%')],
     ['右侧是小三角', html.includes('>▾<')],
     ['展开后有三种方式', compileMenuHtml.includes('完整编译') && compileMenuHtml.includes('快速编译') && compileMenuHtml.includes('从头编译')],
-    ['另有「编译」按钮', html.includes('>编译<')],
+    ['按钮上显示当前编译方式', html.includes('>完整编译<') || html.includes('>快速编译<') || html.includes('>从头编译<')],
     ['右键菜单默认不显示', !html.includes('定位到 PDF 位置')],
     ['缩放到 200% 时页面宽度翻倍', html.includes('width:200.00%')],
     ['显示缩放百分比', html.includes('200%')],
