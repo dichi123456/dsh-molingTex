@@ -158,7 +158,31 @@ fetch('/moling/api/tree', { method: 'POST', headers: { 'content-type': 'applicat
 
 ## 安装
 
-用插件管理器（它同时写依赖与 `dsh.profile.bundles`，也会处理已装同名包）：
+### 一键安装（给别人用）
+
+在 DSH 里让 agent 执行（或自己在插件管理器里填同一个地址）：
+
+```
+plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.6.0/dsh-plugin-moling-latex-0.6.0.tgz
+```
+
+也可以直接用 git 源（跟随 `main` 最新提交）：
+
+```
+plugin_manager install_bundle  github:dichi123456/dsh-molingTex
+```
+
+发布页：<https://github.com/dichi123456/dsh-molingTex/releases>
+
+两种方式都实测可用（`npm i <tarball-url>` / `npm i github:dichi123456/dsh-molingTex` 都能装上 0.6.0，含 `lib/vendor/cm6.js`）。
+
+前置条件：
+
+- DSH（带插件管理器）——插件以 `dsh.bundle` + `cordis.patch.yml` 挂载；
+- 本机 TeX 发行版（TeX Live / MiKTeX）：编译要 `xelatex`/`pdflatex`，PDF 预览要 poppler 的 `pdftoppm`，双向定位要 `synctex`；
+- 装完**重开 DSH**（宿主半侧要加载 `lib/server.js`）。
+
+### 本地开发安装
 
 ```
 plugin_manager install_bundle  E:\E_个人项目\Latex_APP\dsh-plugin-moling-latex

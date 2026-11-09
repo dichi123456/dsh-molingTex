@@ -34,5 +34,26 @@
   "engines": {
     "node": ">=18"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "author": "dichi123456 <dichi123456@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dichi123456/dsh-molingTex.git"
+  },
+  "homepage": "https://github.com/dichi123456/dsh-molingTex#readme",
+  "bugs": {
+    "url": "https://github.com/dichi123456/dsh-molingTex/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "latex",
+    "tex",
+    "synctex",
+    "codeMirror"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }
