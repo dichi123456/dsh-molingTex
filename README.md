@@ -160,10 +160,21 @@ fetch('/moling/api/tree', { method: 'POST', headers: { 'content-type': 'applicat
 
 ### 一键安装（给别人用）
 
-在 DSH 里让 agent 执行（或自己在插件管理器里填同一个地址）：
+**方式 A：DSH 界面（官方入口）** —— 设置 → 插件 → 右上「添加插件」，在输入框里填下面任意一种，点「安装」：
 
 ```
-plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.6.0/dsh-plugin-moling-latex-0.6.0.tgz
+github:dichi123456/dsh-molingTex
+```
+
+- 输入框支持 **包名 / GitHub 仓库地址 / 本地目录路径** 三种；
+- GitHub 源装的是 `main` 最新提交；
+- 「包名」需要该包已发布到 npm（本插件**暂未发布 npm**，所以走不了这条）；
+- 本地目录路径 = 下面的「本地开发安装」。
+
+**方式 B：Release 安装包**（版本固定，推荐给不想跟 main 的人）。在 DSH 里让 agent 执行（或自己在插件管理器里填同一个地址）：
+
+```
+plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.6.1/dsh-plugin-moling-latex-0.6.1.tgz
 ```
 
 也可以直接用 git 源（跟随 `main` 最新提交）：
@@ -174,7 +185,7 @@ plugin_manager install_bundle  github:dichi123456/dsh-molingTex
 
 发布页：<https://github.com/dichi123456/dsh-molingTex/releases>
 
-两种方式都实测可用（`npm i <tarball-url>` / `npm i github:dichi123456/dsh-molingTex` 都能装上 0.6.0，含 `lib/vendor/cm6.js`）。
+两种方式都实测可用（`npm i <tarball-url>` / `npm i github:dichi123456/dsh-molingTex` 都能装上 0.6.1，含 `lib/vendor/cm6.js`）。
 
 前置条件：
 
