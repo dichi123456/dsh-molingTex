@@ -17,7 +17,7 @@ github:dichi123456/dsh-molingTex
 ### 指定版本（Release 安装包）
 
 ```
-plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.6.1/dsh-plugin-moling-latex-0.6.1.tgz
+plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.6.2/dsh-plugin-moling-latex-0.6.2.tgz
 ```
 
 ### 本地目录
@@ -38,7 +38,7 @@ plugin_manager install_bundle  <本仓库本地路径>
 **工作台**
 
 - 左侧 **CodeMirror 6** 编辑器：LaTeX 语法高亮、行号、软换行、多标签；`F5` 编译、`Ctrl+S` 保存、`Ctrl+F` 搜索；
-- **进入项目文件夹自动打开 `main.tex`**（项目里没有 .tex 就什么都不开）；
+- **进入项目文件夹自动打开 `main.tex`**（项目里没有 .tex 就什么都不开）；**切到另一个项目文件夹时，上一个项目打开的 tex 标签、PDF 预览与编译日志会一并关掉**（同一个项目重进不受影响）；
 - 顶栏：`首页`、工作区切换、`树 | 提纲`、`换行 | 保存 | 新建`、连接状态胶囊、分体编译按钮（左键即编译，小三角切 快速 / 完整 / 从头）；
 - `树`：浮层文件树，右边框可拖；`提纲`：章节列表点一条跳一行；
 - 底部状态栏：编译结果居中显示（成功绿 / 失败红），最右切换 `日志` / `PDF`。
