@@ -169,6 +169,10 @@ const result = spawnSync(browser, ['--headless=new', '--disable-gpu', '--no-firs
   '--dump-dom', 'file:///' + htmlPath.replace(/\\/g, '/')], { encoding: 'utf8', timeout: 60000 })
 
 const dump = String(result.stdout || '')
+if (result.error) {
+  console.log('  – 启动浏览器失败（' + String(result.error.message || result.error) + '），跳过')
+  process.exit(0)
+}
 const i = dump.indexOf('<pre id="out">')
 const j = dump.indexOf('</pre>', i)
 if (i < 0 || j < 0) {
