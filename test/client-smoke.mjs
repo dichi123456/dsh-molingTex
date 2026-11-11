@@ -813,5 +813,81 @@ try {
   bad('适应窗口测试抛错', String(error.message))
 }
 
+console.log('20) 切换项目文件夹：上一个项目的 tex / PDF 同步关闭')
+try {
+  const store = bundle.__store
+  const enterRoot = bundle.__enterRoot
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const body = src.slice(src.indexOf('function enterRoot'), src.indexOf('function openDirectory'))
+
+  ok('enterRoot 接了关闭逻辑（只有 root 变了才关）',
+    body.includes('normalizePath(root) !== normalizePath(state.root)') && body.includes('closeProjectFiles()'))
+
+  /** 造一个「上一个项目开着东西」的现场：两个 tex 标签 + PDF + 日志 + 提纲 + 右键菜单。 */
+  const seedProject = (root) => Object.assign(store, {
+    root,
+    tabs: [
+      { id: 'c-t1', root, rel: 'main.tex', name: 'main.tex', text: 'x', dirty: false },
+      { id: 'c-t2', root, rel: 'chap/a.tex', name: 'a.tex', text: 'y', dirty: true }
+    ],
+    activeId: 'c-t1',
+    tree: { name: 'a', children: [] },
+    files: [{ rel: 'main.tex' }],
+    total: 1,
+    pdfUrl: 'blob:moling-test',
+    pdfRel: 'main.pdf',
+    pdfRoot: root,
+    pdfRev: '123',
+    pdfFor: root + '|main.pdf|123',
+    pdfPages: 3,
+    pdfPageSize: { width: 1, height: 1 },
+    log: { success: true },
+    outline: { sections: [] },
+    outlineOpen: true,
+    menu: { x: 1, y: 2, line: 3 },
+    notice: '已保存 main.tex',
+    syncNotice: '第 1 页',
+    busy: 'compile',
+    error: '旧错误'
+  })
+  /** enterRoot 会去拉宿主（离线自测里必然失败）：吞掉拒绝，只看同步做的那部分。 */
+  const tryEnter = (root) => {
+    try {
+      const pending = enterRoot(root)
+      if (pending && typeof pending.catch === 'function') pending.catch(() => {})
+    } catch (error) { /* 离线环境没有数据通道，忽略 */ }
+  }
+
+  // 换一个项目文件夹 → 上一个项目的东西全关
+  seedProject('E:/proj/a')
+  tryEnter('E:/proj/b')
+  ok('换项目后 tex 标签全关', store.tabs.length === 0 && store.activeId === null)
+  ok('换项目后 PDF 预览关掉',
+    store.pdfRel === '' && store.pdfRoot === '' && store.pdfUrl === '' && store.pdfFor === '' && store.pdfPages === 0)
+  ok('换项目后日志 / 提纲 / 右键菜单 / 定位提示清空',
+    store.log === null && store.outline === null && store.outlineOpen === false
+    && store.menu === null && store.syncNotice === '')
+  ok('换项目后旧文件树放下（不残留上一个项目的文件）',
+    store.tree === null && store.files.length === 0 && store.busy === '')
+  ok('root 已切成新项目', store.root === 'E:/proj/b')
+
+  // 还是同一个项目（大小写不同也算同一个）→ 标签与 PDF 留着
+  seedProject('E:/Proj/B')
+  tryEnter('e:/proj/b')
+  ok('同一个项目重进：标签与 PDF 不受影响',
+    store.tabs.length === 2 && store.pdfRel === 'main.pdf' && store.log && store.root === 'e:/proj/b')
+
+  // 收摊：把 store 还原，别影响后面的断言
+  Object.assign(store, {
+    root: '', tabs: [], activeId: null, tree: null, files: [], total: 0,
+    pdfUrl: '', pdfRel: '', pdfRoot: '', pdfRev: '', pdfFor: '',
+    pdfPages: 0, pdfPageSize: null, log: null,
+    outline: null, outlineOpen: false, menu: null,
+    notice: '', syncNotice: '', busy: '', error: ''
+  })
+} catch (error) {
+  bad('切换项目关闭逻辑测试抛错', String(error.message))
+}
+
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)
 process.exit(failures === 0 ? 0 : 1)
