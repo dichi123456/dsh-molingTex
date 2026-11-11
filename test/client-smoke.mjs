@@ -767,8 +767,20 @@ try {
     ['根目录 main 优先于子目录 main', pick([{ rel: 'a/main.tex' }, { rel: 'main.tex' }]) === 'main.tex'],
     ['不区分大小写（MAIN.TEX）', pick([{ rel: 'MAIN.TEX' }]) === 'MAIN.TEX'],
     ['唯一一个非 main 的 .tex 也选它', pick([{ rel: 'paper.tex' }, { rel: 'ref.bib' }]) === 'paper.tex'],
-    ['多个非 main 的 .tex 拿不准 → 不开', pick([{ rel: 'a.tex' }, { rel: 'b.tex' }]) === null],
-    ['反斜杠路径也能识别', pick([{ rel: 'sub\\main.tex' }]) === 'sub\\main.tex']
+    ['反斜杠路径也能识别', pick([{ rel: 'sub\\main.tex' }]) === 'sub\\main.tex'],
+    // ↓ 本轮新增：没有 main.tex 时也要能挑出"最像主文件"的那个
+    ['最近打开过的文件优先（用户上次看的那个）',
+      pick([{ rel: 'a.tex', size: 10 }, { rel: 'b.tex', size: 99 }],
+        { root: 'E:/p', recents: [{ kind: 'file', root: 'E:/p', value: 'a.tex' }] }) === 'a.tex'],
+    ['最近记录属于别的项目时不认',
+      pick([{ rel: 'a.tex', size: 10 }, { rel: 'b.tex', size: 99 }],
+        { root: 'E:/p', recents: [{ kind: 'file', root: 'E:/other', value: 'a.tex' }] }) === 'b.tex'],
+    ['根目录只有一个 .tex 时选它（章节在子目录）',
+      pick([{ rel: 'sub/ch1.tex' }, { rel: 'thesis.tex' }]) === 'thesis.tex'],
+    ['有多个同层 .tex → 选体积最大的（真正的论文结构）',
+      pick([{ rel: 'Safety_MARL框架.tex', size: 10037 }, { rel: '问题场景定义.tex', size: 316 }]) === 'Safety_MARL框架.tex'],
+    ['体积并列时结果稳定（字典序）',
+      pick([{ rel: 'b.tex', size: 5 }, { rel: 'a.tex', size: 5 }]) === 'a.tex']
   ]
   for (const [label, passed] of checks) passed ? ok(label) : bad(label)
 
@@ -777,7 +789,7 @@ try {
   const enter = src.slice(src.indexOf('function enterRoot'), src.indexOf('function openDirectory'))
   const offCount = (src.match(/autoOpen: false/g) || []).length
   ok('enterRoot 接线（loadTree 后挑主 tex + autoOpen 开关）',
-    enter.includes('pickMainTex(state.files)') && enter.includes('autoOpen === false'))
+    enter.includes('pickMainTex(state.files, { root: root, recents: state.recents })') && enter.includes('autoOpen === false'))
   ok('打开具体文件/新建文档不被抢（2 处 autoOpen:false）', offCount === 2)
 } catch (error) {
   bad('自动打开主 tex 测试抛错', String(error.message))
@@ -887,6 +899,339 @@ try {
   })
 } catch (error) {
   bad('切换项目关闭逻辑测试抛错', String(error.message))
+}
+
+console.log('21) 外部改动同步（大模型改 tex → 编辑区自动刷新）')
+try {
+  const store = bundle.__store
+  const sync = bundle.__syncExternalChanges
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+
+  ok('轮询接线（boot 起 2 秒定时器 + 面板挂载兜底 + 窗口重获焦点补一次）',
+    /startWatch\(\)\s*\/\/ 外部改动轮询/.test(src)
+    && src.includes('startWatch()   // 双保险')
+    && /var onFocus = function \(\) \{\s*loadWorkspaces\(\)\s*syncExternalChanges\(\)/.test(src))
+
+  // 打桩 fetch：磁盘状态全由下面这几个变量演
+  const disk = { text: 'old' }
+  let mtime = 1
+  let pdfMtime = 101
+  const extra = []                       // 额外文件（模拟大模型新建文件）
+  const calls = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url, opts) => {
+    const endpoint = String(url).split('/').pop()
+    const body = opts && opts.body ? JSON.parse(opts.body) : {}
+    calls.push(endpoint)
+    const reply = (value) => ({ ok: true, status: 200, json: async () => ({ ok: true, value }) })
+    if (endpoint === 'tree') {
+      const files = [
+        { rel: 'main.tex', name: 'main.tex', size: disk.text.length, mtime, editable: true },
+        { rel: 'main.pdf', name: 'main.pdf', size: 5, mtime: pdfMtime, editable: false }
+      ].concat(extra)
+      return reply({
+        root: body.root, count: files.length, total: files.length, skipped: 0, truncated: false,
+        files, tree: { name: 'w', rel: '', type: 'dir', children: [] }
+      })
+    }
+    if (endpoint === 'read-file') {
+      return reply({ path: 'x', rel: body.path, name: body.path, text: disk.text, size: disk.text.length, mtime })
+    }
+    if (endpoint === 'pdf') {
+      return reply({ rel: body.path, bytes: 5, mtime: pdfMtime, pages: 1, raster: true, pageSize: null })
+    }
+    return reply({})
+  }
+
+  Object.assign(store, {
+    view: 'workbench',
+    root: 'E:/proj/w',
+    tree: { name: 'w', rel: '', type: 'dir', children: [] },
+    files: [],
+    tabs: [{ id: 'w-1', root: 'E:/proj/w', rel: 'main.tex', name: 'main.tex', text: 'old', dirty: false, loading: false }],
+    activeId: 'w-1',
+    pdfRel: 'main.pdf',
+    pdfRoot: 'E:/proj/w',
+    pdfFor: '',
+    pdfRev: '',
+    notice: '',
+    noticeOk: true,
+    outlineOpen: false
+  })
+
+  // 第一轮：只记版本戳，不重载（内容刚打开过）
+  await sync()
+  ok('第一轮只记版本戳（不无谓重载）',
+    bundle.__stampOf('main.tex') === '1' && store.tabs[0].text === 'old')
+  ok('同步走的是 tree 通道（不再依赖 stat 端点）', calls.includes('tree') && !calls.includes('stat'))
+  ok('同步成功后指示灯变绿', store.syncOk === true && store.syncError === '')
+
+  // 大模型改了磁盘 → 下一轮把新内容读进编辑区
+  disk.text = 'new content from the LLM'
+  mtime = 2
+  await sync()
+  ok('磁盘变了 → 编辑区自动同步', store.tabs[0].text === 'new content from the LLM')
+  ok('状态栏给出同步提示', String(store.notice).includes('已同步') && store.noticeOk === true)
+  ok('同步后版本戳跟着更新', bundle.__stampOf('main.tex') === '2')
+
+  // 没变化的轮询不该重复动编辑区
+  await sync()
+  ok('没变化就不动', store.tabs[0].text === 'new content from the LLM')
+
+  // 标签有未保存改动 → 只提醒，绝不覆盖
+  store.tabs[0].dirty = true
+  disk.text = 'LLM wrote again'
+  mtime = 3
+  await sync()
+  ok('脏标签不被外部改动覆盖', store.tabs[0].text === 'new content from the LLM')
+  ok('脏标签给出红色提醒', String(store.notice).includes('未保存') && store.noticeOk === false)
+
+  // PDF 被（大模型）重新编译 → 自动换图
+  pdfMtime = 102
+  await sync()
+  ok('PDF 重新编译后自动换图', store.pdfRev === '102' && calls.includes('pdf'))
+
+  // 大模型新建了文件 → 文件清单变 → 树跟着换
+  extra.push({ rel: 'new-chapter.tex', name: 'new-chapter.tex', size: 12, mtime: 5, editable: true })
+  await sync()
+  ok('新建文件后文件树跟着更新', store.files.length === 3 && store.files.some((file) => file.rel === 'new-chapter.tex'))
+
+  // 通道挂掉不能静默：要亮红灯 + 写原因
+  const stubFetch = globalThis.fetch
+  globalThis.fetch = async () => ({ ok: false, status: 500, json: async () => ({ ok: false, error: 'boom' }) })
+  await sync()
+  ok('同步失败会亮红灯并写原因', store.syncOk === false && /boom/.test(store.syncError))
+  globalThis.fetch = stubFetch
+  await sync()
+  ok('恢复后指示灯回绿', store.syncOk === true)
+
+  // 收摊：还原 fetch 与 store
+  globalThis.fetch = realFetch
+  Object.assign(store, {
+    root: '', view: 'welcome', tabs: [], activeId: null, tree: null, files: [],
+    pdfRel: '', pdfRoot: '', pdfRev: '', pdfFor: '', pdfPages: 0, pdfPageSize: null,
+    notice: '', noticeOk: true, outlineOpen: false, busy: '', error: '', syncOk: null, syncError: ''
+  })
+} catch (error) {
+  bad('外部改动同步测试抛错', String(error.message))
+}
+
+console.log('22) 外部改动标绿：改了哪几行（diff 纯函数 + 接线）')
+try {
+  const diff = bundle.__diffLineRanges
+  const many = (n) => Array.from({ length: n }, (_, i) => 'line ' + (i + 1)).join('\n')
+  const fmt = (ranges) => JSON.stringify(ranges)
+
+  const checks = [
+    ['文本没变 → 不标', fmt(diff('a\nb', 'a\nb')) === '[]'],
+    ['中间改一行 → 只标那一行', fmt(diff('a\nb\nc', 'a\nB\nc')) === '[{"from":2,"to":2}]'],
+    ['末尾追加两行 → 标新增的两行', fmt(diff('a\nb', 'a\nb\nc\nd')) === '[{"from":3,"to":4}]'],
+    ['中间插入 → 标插入处', fmt(diff('a\nz', 'a\nb\nz')) === '[{"from":2,"to":2}]'],
+    ['纯删除 → 标删除处紧跟的一行', fmt(diff('a\nb\nc', 'a\nc')) === '[{"from":2,"to":2}]'],
+    ['空文档 → 全算新增', fmt(diff('', 'x\ny')) === '[{"from":1,"to":2}]'],
+    ['顺序变了（行集相同）→ 兜底给一整块', diff('a\nb', 'b\na').length > 0],
+    ['null/undefined 不炸', Array.isArray(diff(null, undefined)) && diff(null, null).length === 0]
+  ]
+  // 关键用例：1000 行里第 10 行与第 500 行各改一处 → 两段，不能把中间 490 行全刷绿
+  const base = many(1000).split('\n')
+  const edited = base.slice()
+  edited[9] = 'CHANGED-10'
+  edited[499] = 'CHANGED-500'
+  const far = diff(base.join('\n'), edited.join('\n'))
+  checks.push(['远隔两处改动 → 两段区间', fmt(far) === '[{"from":10,"to":10},{"from":500,"to":500}]'])
+
+  for (const [label, passed] of checks) passed ? ok(label) : bad(label)
+
+  // queueFlash → takeFlash 配对（编辑器同步 effect 消费）
+  bundle.__queueFlash('t1', 'a\nb', 'a\nB')
+  const taken = bundle.__takeFlash('t1')
+  ok('queueFlash → takeFlash 配对', taken && taken.tabId === 't1' && taken.ranges[0].from === 2)
+  ok('takeFlash 只消费一次', bundle.__takeFlash('t1') === null)
+  bundle.__queueFlash('t2', 'a', 'b')
+  ok('别人的排队不消费', bundle.__takeFlash('t9') === null && bundle.__takeFlash('t2') !== null)
+
+  // 接线扫描
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('接线：reloadTab 算改动行 → 编辑器同步 effect 涂绿',
+    src.includes('queueFlash(tab.id, live.text, data.text)') && src.includes('var flash = takeFlash(tab.id)'))
+  ok('CM 路径：视口滚动补涂 + 换标签清绿底',
+    src.includes('onViewport: function () { repaintFlash() }') && src.includes('if (flashState.owner === view) clearFlash()'))
+  ok('回退（textarea）路径同样标绿', src.includes('startFlash(flash.tabId, flash.ranges, container, container'))
+  const kernelSrc = readFileSync(new URL('../lib/vendor/entry.js', import.meta.url), 'utf8')
+  ok('不动内核：entry.js 里没有标绿代码（刷新页面即生效，不用重建 cm6.js）',
+    !kernelSrc.includes('startFlash') && !kernelSrc.includes('FLASH_GREEN'))
+} catch (error) {
+  bad('标绿测试抛错', String(error.message))
+}
+
+console.log('23) 同步不被标绿拖垮 + 绿底涂/摘（假 DOM）')
+try {
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+
+  // 回归：外部 setDoc 会走内核 onChange，不挡住就会把标签标脏 → 之后每次外部改动
+  // 都被 reloadTab 的「有未保存改动」拦住（症状就是"同步突然不工作了"）
+  ok('onChange 认得「刚同步下去的文本」，不标脏',
+    /if \(suppressDirtyText !== null && text === suppressDirtyText\)/.test(src)
+    && /setTab\(tab\.id, \{ text: text, dirty: true \}\)/.test(src))
+  ok('setDoc 前先记下预期文本', src.includes('suppressDirtyText = tab.text'))
+  const reloadAt = src.indexOf('setTab(tab.id, { text: data.text, loading: false })')
+  const flashAt = src.indexOf('try { queueFlash(tab.id, live.text, data.text) }')
+  ok('同步先落地、标绿后置且自带 try（标绿出错不拖垮同步）',
+    reloadAt > 0 && flashAt > reloadAt && src.includes('try { queueFlash(tab.id, live.text, data.text) }'))
+
+  // 涂/摘：用假 DOM 走一遍 startFlash → paintFlash → clearFlash
+  const mkNode = (line) => ({
+    style: {},
+    getAttribute(name) { return name === 'data-line' ? String(line) : null }
+  })
+  const a = mkNode(2)
+  const b = mkNode(3)
+  const c = mkNode(9)
+  const container = { querySelectorAll: () => [a, b, c] }
+  const owner = {}
+  const readLine = (node) => Number(node.getAttribute('data-line'))
+
+  bundle.__startFlash('t', [{ from: 2, to: 4 }], owner, container, readLine)
+  ok('区间内的行涂上绿底', a.style.backgroundColor === bundle.__FLASH_GREEN && b.style.backgroundColor === bundle.__FLASH_GREEN)
+  ok('区间外的行不涂', c.style.backgroundColor === undefined)
+  ok('涂了渐隐用的 transition', a.style.transition.includes('background-color'))
+  bundle.__clearFlash()
+  ok('clearFlash 摘掉绿底（由 transition 渐隐）', a.style.backgroundColor === '' && b.style.backgroundColor === '')
+  bundle.__clearFlash()
+  ok('clearFlash 幂等（连点两次不炸）', true)
+
+  // 防御：readLine 抛异常 / 容器不对 / 没有范围，都不能把 effect 弄崩
+  const bad = mkNode(5)
+  bundle.__startFlash('t', [{ from: 1, to: 9 }], owner, { querySelectorAll: () => [bad] }, () => { throw new Error('boom') })
+  ok('readLine 抛异常 → 不涂但不炸', bad.style.backgroundColor === undefined)
+  bundle.__clearFlash()
+  bundle.__startFlash('t', [{ from: 1, to: 9 }], owner, {}, readLine)
+  ok('容器没有 querySelectorAll → 直接跳过', true)
+  bundle.__clearFlash()
+  bundle.__startFlash('t', [], owner, container, readLine)
+  ok('没有改动行 → 不进涂刷流程', a.style.backgroundColor === '' || a.style.backgroundColor === undefined)
+  bundle.__clearFlash()
+} catch (error) {
+  bad('标绿/同步回归测试抛错', String(error.message))
+}
+
+console.log('24) 同步观感：视口不跳 + 绿标行号换算')
+try {
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+
+  ok('setDoc 前后接了 capture/restore（整篇替换不再把页面甩走）',
+    /var keep = captureViewport\(view\)/.test(src)
+    && /kernel\.setDoc\(view, tab\.text\)\s*\n\s*restoreViewport\(view, keep\)/.test(src))
+  ok('下一帧再补一次还原（等布局稳定）', /requestAnimationFrame\(function \(\) \{ restoreViewport\(/.test(src))
+  ok('行号换算不再以 posAtDOM 为主路', !src.includes('view.posAtDOM') && src.includes('lineReaderFor(view)'))
+
+  // 假 view：100 行、每行 10 个字符位置，视口首行 = 第 6 行
+  const doc = {
+    lines: 100,
+    line: (n) => ({ from: (n - 1) * 10 }),
+    lineAt: (pos) => ({ number: Math.max(1, Math.floor(pos / 10) + 1) })
+  }
+  const nodes = [{ id: 'n1' }, { id: 'n2' }, { id: 'n3' }]
+  const scrollDOM = { scrollTop: 250 }
+  const view = {
+    scrollDOM,
+    state: { doc },
+    viewport: { from: 50 },              // → 第 6 行
+    contentDOM: { querySelectorAll: () => nodes },
+    lineBlockAtHeight: () => ({ top: 200, from: 50 }),
+    lineBlockAt: () => ({ top: 900 }),
+    posAtCoords: () => null
+  }
+
+  const keep = bundle.__captureViewport(view)
+  ok('captureViewport 记下「首行 + 行内偏移」', keep && keep.line === 6 && keep.delta === 50)
+  bundle.__restoreViewport(view, keep)
+  ok('restoreViewport 把滚动位置挪回去', scrollDOM.scrollTop === 950)
+  bundle.__restoreViewport(view, { line: 999, delta: 0 })
+  ok('视口行号超界时夹到最后一行、不炸', scrollDOM.scrollTop === 900)
+  ok('拿不到布局时 capture 返回 null（宁可不还原）',
+    bundle.__captureViewport(null) === null && bundle.__captureViewport({}) === null)
+
+  // 行号换算：DOM 顺序优先
+  const reader = bundle.__lineReaderFor(view)
+  ok('第 1 个 .cm-line → 视口首行', reader(nodes[0]) === 6)
+  ok('第 3 个 .cm-line → 首行 + 2', reader(nodes[2]) === 8)
+
+  // 兜底：DOM 顺序找不到 → 用中心点反查；中心点也拿不到 → -1（不涂但不炸）
+  const stray = { getBoundingClientRect: () => ({ left: 0, top: 0, height: 10 }) }
+  ok('DOM 顺序里找不到 → 中心点反查失败给 -1', reader(stray) === -1)
+  const view2 = Object.assign({}, view, { posAtCoords: () => 95 })
+  ok('中心点反查可用时能算出第 10 行', bundle.__lineReaderFor(view2)(stray) === 10)
+} catch (error) {
+  bad('视口/行号测试抛错', String(error.message))
+}
+
+console.log('25) 回归：自动打开主 tex 不被轮询干扰 + 发送选中内容有备份')
+try {
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const store = bundle.__store
+  const realFetch = globalThis.fetch
+
+  const files = [
+    { rel: 'paper-main.tex', name: 'paper-main.tex', size: 10, mtime: 1, editable: true },
+    { rel: 'refs.bib', name: 'refs.bib', size: 5, mtime: 1, editable: true }
+  ]
+  let served = files
+  globalThis.fetch = async (url, opts) => {
+    const endpoint = String(url).split('/').pop()
+    const body = opts && opts.body ? JSON.parse(opts.body) : {}
+    const reply = (value) => ({ ok: true, status: 200, json: async () => ({ ok: true, value }) })
+    if (endpoint === 'workspaces') {
+      return reply({ workspaces: [{ path: body.root || '', title: 'w', kind: 'workspace' }], openedRoots: [], allowedRoots: [], defaultRoot: null })
+    }
+    if (endpoint === 'tree') {
+      return reply({
+        root: body.root, count: served.length, total: served.length, skipped: 0, truncated: false,
+        files: served, tree: { name: 'w', rel: '', type: 'dir', children: [] }
+      })
+    }
+    if (endpoint === 'read-file') {
+      return reply({ path: 'x', rel: body.path, name: body.path, text: '% ' + body.path + '\n', size: 10, mtime: 1 })
+    }
+    return reply({})
+  }
+
+  Object.assign(store, {
+    root: '', view: 'welcome', tabs: [], activeId: null, tree: null, files: [],
+    pdfRel: '', pdfFor: '', pdfRev: '', notice: '', syncOk: null, syncError: ''
+  })
+
+  // 1) 进项目自动打开主 tex（唯一 .tex）
+  await bundle.__enterRoot('E:/proj/auto')
+  ok('进项目自动打开主 tex（唯一 .tex）', store.tabs.length === 1 && store.tabs[0].rel === 'paper-main.tex')
+
+  // 2) 轮询绝不能把开着的标签关掉（只提示）
+  served = []
+  await bundle.__syncExternalChanges()
+  ok('文件从清单里消失也不关标签（只提示）',
+    store.tabs.length === 1 && /找不到了/.test(String(store.notice)))
+  served = files
+  await bundle.__syncExternalChanges()
+  ok('文件回来之后标签与提示都稳定', store.tabs.length === 1)
+
+  // 3) 接线：进项目期间暂停轮询 / 自动打开失败补一次并说明原因
+  ok('进项目期间暂停轮询（enteringRoot 闸门）',
+    src.includes('enteringRoot = true') && src.includes('if (enteringRoot) return Promise.resolve(false)'))
+  ok('自动打开失败会补一次、没主 tex 时给出说明',
+    src.includes('if (!findTab(root, rel)) return openTab(root, rel)') && src.includes('未自动打开'))
+
+  // 4) 发送选中内容：右键那一刻就把选区抓下来，菜单期间丢了还有备份
+  ok('右键抓下选区（菜单后丢失也能发）',
+    src.includes('selection: selection') && src.includes('var captured = store.menu && store.menu.selection'))
+  ok('发送失败不再静默', src.includes('发送选中内容失败：'))
+
+  globalThis.fetch = realFetch
+  Object.assign(store, {
+    root: '', view: 'welcome', tabs: [], activeId: null, tree: null, files: [],
+    notice: '', syncOk: null, syncError: ''
+  })
+} catch (error) {
+  bad('回归测试抛错', String(error.message))
 }
 
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)

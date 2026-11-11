@@ -247,6 +247,70 @@ console.log('8) 错误处理')
   broken.status === 400 && broken.json && /不是合法 JSON/.test(broken.json.error) ? ok('坏 JSON 明确报错') : bad('坏 JSON', JSON.stringify(broken.json))
 }
 
+console.log('9) 外部改动探测 stat（大模型改文件 → 面板自动刷新）')
+{
+  const dir = mkdtempSync(join(tmpdir(), 'moling-stat-'))
+  writeFileSync(join(dir, 'main.tex'), '\\documentclass{article}\n')
+  await call('POST', 'open-root', { root: dir })
+
+  const probe = () => call('POST', 'stat', { root: dir, paths: ['main.tex', 'gone.tex'] })
+
+  const first = await probe()
+  if (!first.json || !first.json.ok) bad('stat', JSON.stringify(first.json))
+  else {
+    const value = first.json.value
+    const entry = value.entries['main.tex']
+    entry && entry.exists && entry.size > 0 && entry.mtime > 0
+      ? ok('stat 给出版本戳', `mtime=${entry.mtime} size=${entry.size}`)
+      : bad('stat entries', JSON.stringify(value.entries))
+    value.entries['gone.tex'] && value.entries['gone.tex'].exists === false
+      ? ok('不存在的路径回 exists:false（不掀翻整轮）')
+      : bad('缺文件没兜住', JSON.stringify(value.entries['gone.tex']))
+    const dirsOk = /^[0-9a-f]{20}$/.test(value.dirs || '')
+    dirsOk
+      ? ok('目录指纹是短哈希', value.dirs)
+      : bad('dirs 指纹不对', String(value.dirs))
+  }
+  const dirsBefore = first.json && first.json.ok ? first.json.value.dirs : ''
+
+  // 越界路径不该把整轮轮询掀翻（面板每 2 秒打一次，不能因为一个坏路径 500）
+  const outside = await call('POST', 'stat', { root: dir, paths: ['../../Windows/win.ini'] })
+  outside.json && outside.json.ok && outside.json.value.entries['../../Windows/win.ini'].exists === false
+    ? ok('越界路径回 exists:false（不抛错）')
+    : bad('越界 stat', JSON.stringify(outside.json).slice(0, 160))
+
+  // 改内容：版本戳变，但目录指纹不变 → 只刷新编辑区，不白刷文件树
+  writeFileSync(join(dir, 'main.tex'), '\\documentclass{article}\n% 大模型补的一段\n')
+  const edited = await probe()
+  const editedValue = edited.json && edited.json.ok ? edited.json.value : null
+  editedValue && editedValue.entries['main.tex'].size > 30 && editedValue.dirs === dirsBefore
+    ? ok('内容改动 → 版本戳变、目录指纹不变')
+    : bad('内容改动判定不对', JSON.stringify(editedValue && editedValue.entries['main.tex']))
+
+  // 新建文件：父目录 mtime 变 → 指纹变（文件树要重拉）
+  writeFileSync(join(dir, 'new-one.tex'), 'x')
+  const added = await probe()
+  const addedDirs = added.json && added.json.ok ? added.json.value.dirs : ''
+  addedDirs && addedDirs !== dirsBefore
+    ? ok('新建文件 → 目录指纹变（文件树会重拉）')
+    : bad('新建文件指纹没变', `${dirsBefore} → ${addedDirs}`)
+
+  // 删掉：又变一次
+  rmSync(join(dir, 'new-one.tex'), { force: true })
+  const removed = await probe()
+  removed.json && removed.json.ok && removed.json.value.dirs !== addedDirs
+    ? ok('删除文件 → 指纹再变')
+    : bad('删除后指纹没变', String(removed.json && removed.json.value.dirs))
+
+  // 不传 paths（只想看文件树变没变）也得能跑
+  const bare = await call('POST', 'stat', { root: dir })
+  bare.json && bare.json.ok && /^[0-9a-f]{20}$/.test(bare.json.value.dirs || '')
+    ? ok('不传 paths 也能跑（只回目录指纹）')
+    : bad('缺 paths 报错', JSON.stringify(bare.json).slice(0, 160))
+
+  rmSync(dir, { recursive: true, force: true })
+}
+
 // 收尾
 for (const name of ['api-write.tex', 'hello-en.pdf', 'hello-en.aux', 'hello-en.log', 'hello-en.out', 'hello-en.synctex.gz']) {
   try { rmSync(join(fixtures, name), { force: true }) } catch { /* 忽略 */ }
