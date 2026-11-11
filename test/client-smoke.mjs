@@ -786,13 +786,24 @@ try {
 console.log('18) 分界线互换圆钮（墨灵面板 ↔ 对话框）')
 try {
   const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const swapTpl = bundle.__swappedTemplate
   const checks = [
     ['圆钮组件（SwapButton）在场', src.includes('function SwapButton(props)')],
     ['图标 = 上下重叠的两支左右双箭头（两条 path）',
       src.includes('M1.8 4.4 H11.2') && src.includes('M1.8 8.6 H11.2')],
     ['贴分界线：fixed + 实测 [data-moling] 左右缘', src.includes("position: 'fixed'") && src.includes("document.querySelector('[data-moling]')")],
-    ['互换靠 flex/grid 的 order，并量位置验证', src.includes('style.order') && src.includes('before * after < 0')],
-    ['验证不过就回滚，不留半吊子布局', src.includes("cols.mine.style.order = ''") && src.includes('已还原')],
+    ['互换 = 对调显式 grid-area 列位（order 对 DSH 三列 grid 无效，已彻底移除）',
+      src.includes("style.gridArea = '1 / 2'") && src.includes("style.gridArea = '1 / 3'") && !src.includes('.style.order =')],
+    ['轨道重排：[侧栏, 对话框, 右栏] → [侧栏, 右栏, 对话框]',
+      swapTpl([280, 776, 520]) === '280px minmax(0px, 520px) minmax(0px, 1fr)'],
+    ['轨道值保留小数（拖动分栏后不抖）', swapTpl([280.5, 776.25, 519.5]) === '280.5px minmax(0px, 519.5px) minmax(0px, 1fr)'],
+    ['React 每次重写框架模板都被接住重排（窗口缩放 / 面板开合不丢）',
+      src.includes('MutationObserver') && src.includes("attributeFilter: ['style']") && src.includes('writeSwapTemplate()')],
+    ['换位后落进对话框的右栏拖拽手柄藏起来、取消时原样恢复',
+      src.includes('data-moling-swap-handle') && src.includes('function hideRightHandles') && src.includes('function restoreHandles')],
+    ['列/框架被重挂载后自动补换位（低频兜底走 syncSwap）', src.includes('syncSwap()') && src.includes('function applySwap')],
+    ['验证不过就整体回滚，不留半吊子布局', src.includes('endSwap()') && src.includes('已还原')],
+    ['面板收起（宽度塌成 0）时不贴线', src.includes('rect.width < 80')],
     ['Body 里挂了圆钮（Fragment 与视图并列）', src.includes('h(SwapButton, { store: store })')],
     ['位置状态只记会话内（不进 localStorage 白名单）', !src.includes('swapOn: state.swapOn')]
   ]
