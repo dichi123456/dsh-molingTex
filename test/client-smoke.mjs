@@ -518,18 +518,23 @@ try {
   store.compileMenu = false
   const checks = [
     ['顶栏有「换行」', html.includes('>换行<')],
-    ['顶栏有「保存」', html.includes('>保存<')],
-    // 顶栏分组：树+提纲 一个圆角底色区，换行+保存+新建 另一个
+    ['顶栏有「保存」分体按钮（默认手动保存）', html.includes('>手动保存<') && html.includes('>▾<')],
+    // 顶栏分组：树+提纲 一个圆角底色区，换行+保存+新建+自编 另一个
     ['分组一：树 + 提纲 同底色圆角区', (function () {
       const from = html.indexOf('data-btn-group="view"')
       const to = html.indexOf('data-btn-group="edit"')
       const seg = from > -1 && to > from ? html.slice(from, to) : ''
       return seg.includes('>树<') && seg.includes('>提纲<')
     })()],
-    ['分组二：换行 + 保存 + 新建 同底色圆角区', (function () {
+    ['分组二：换行 + 保存 + 新建 + 自编 同底色圆角区', (function () {
       const from = html.indexOf('data-btn-group="edit"')
-      const seg = from > -1 ? html.slice(from, from + 1600) : ''
-      return seg.includes('>换行<') && seg.includes('>保存<') && seg.includes('>新建<')
+      if (from < 0) return false
+      const at = (text) => html.indexOf(text, from)
+      const wrap = at('>换行<')
+      const save = at('>手动保存<')
+      const create = at('>新建<')
+      const auto = at('>自编<')
+      return wrap > from && save > wrap && create > save && auto > create
     })()],
     ['组内按钮不带独立边框（btnFlat 透明边框）', html.includes('border:1px solid transparent')],
     // 两组各自一色：style 属性写在 data-btn-group 标记之前，所以按位置夹逼
@@ -546,13 +551,13 @@ try {
       const warn = html.indexOf('var(--dsw-alias-state-warn-primary')
       return amber > view && amber < edit && warn > view && warn < edit
     })()],
-    ['组内竖分隔线：树 | 提纲 一条、换行 | 保存 | 新建 两条', (function () {
+    ['组内竖分隔线：树 | 提纲 一条、换行 | 保存 | 新建 | 自编 三条', (function () {
       const viewFrom = html.indexOf('data-btn-group="view"')
       const editFrom = html.indexOf('data-btn-group="edit"')
       const viewSeg = viewFrom > -1 && editFrom > viewFrom ? html.slice(viewFrom, editFrom) : ''
-      const editSeg = editFrom > -1 ? html.slice(editFrom, editFrom + 1600) : ''
+      const editSeg = editFrom > -1 ? html.slice(editFrom, editFrom + 2200) : ''
       const count = (text) => (text.match(/data-btn-sep/g) || []).length
-      return count(viewSeg) === 1 && count(editSeg) === 2
+      return count(viewSeg) === 1 && count(editSeg) === 3
     })()],
     // 顶栏所有圆角矩形外高统一 24px（首页按钮 / 工作区下拉 / 两个按钮组 / 连接胶囊 / 编译按钮）
     ['顶栏控件外高统一 24px（≥6 处）', (html.match(/height:24px/g) || []).length >= 6],
@@ -631,6 +636,8 @@ try {
   const outlineChecks = [
     ['顶栏有「提纲」按钮', outlineHtml.includes('>提纲<')],
     ['顶栏有「新建」按钮（提纲旁边）', outlineHtml.includes('>新建<') && outlineHtml.indexOf('>提纲<') < outlineHtml.indexOf('>新建<')],
+    ['顶栏有「自编」按钮（自动编译开关，在新建右边）',
+      outlineHtml.includes('>自编<') && outlineHtml.indexOf('>新建<') < outlineHtml.indexOf('>自编<')],
     ['浮层显示章节标题', outlineHtml.includes('引言') && outlineHtml.includes('车辆模型')],
     ['浮层显示行号', outlineHtml.includes('>12<') || outlineHtml.includes('>3<')],
     ['浮层贴左下角', outlineHtml.includes('bottom:8') && outlineHtml.includes('left:8')],
@@ -1239,6 +1246,72 @@ try {
   })
 } catch (error) {
   bad('回归测试抛错', String(error.message))
+}
+
+console.log('26) 「自编」自动编译：触发点与防抖')
+try {
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const checks = [
+    ['默认关闭，并进 localStorage', src.includes('autoCompile: false')
+      && src.includes('autoCompile: state.autoCompile === true')
+      && src.includes('autoCompile: saved.autoCompile === true')],
+    ['防抖 900ms，正忙时跳过（不排队堆积）',
+      src.includes('}, 900)') && /if \(state\.busy\) return\n\s+if \(!activeTab\(\)\) return/.test(src)],
+    ['关着的时候不排期', src.includes('if (state.autoCompile !== true) return')],
+    ['保存成功后触发', /scheduleAutoCompile\(\)\s*\/\/ 「自编」开着就顺手编一次/.test(src)],
+    ['外部改动同步后触发', /scheduleAutoCompile\(\)\s*\/\/ 「自编」开着：大模型改完就自动编一次/.test(src)],
+    ['换项目 / 手动关闭时清掉待触发的定时器',
+      src.includes('if (autoCompileTimer) { clearTimeout(autoCompileTimer); autoCompileTimer = null }')],
+    ['按钮在「换行｜保存｜新建」同组内（橙色分组）', (function () {
+      const group = src.indexOf("S.btnGroupAmber")
+      const spacer = src.indexOf('S.spacer', group)
+      const newBtn = src.indexOf("}, '新建')", group)
+      const autoBtn = src.indexOf("}, '自编')", group)
+      return group > -1 && newBtn > group && autoBtn > newBtn && (spacer === -1 || autoBtn < spacer)
+    })()]
+  ]
+  for (const [label, passed] of checks) passed ? ok(label) : bad(label)
+  ok('store 默认 autoCompile = false', bundle.__store.autoCompile === false)
+
+  // 开关按钮：开/关两态都显式写 border（别混用 border 简写 + borderColor 长写）
+  ok('开关按钮用 toggleBtnStyle 统一两态（树/提纲/换行/自编 4 个）',
+    (src.match(/toggleBtnStyle\(store\./g) || []).length === 4
+    && src.includes('? { border: \'1px solid \' + C.accent, color: C.accent }')
+    && src.includes(': { border: \'1px solid transparent\', color: C.text })'))
+  ok('保存分体：整块自带边框（三角与文字同一圈框）',
+    /saveSplitWrap: \{[\s\S]{0,220}border: '1px solid ' \+ C\.line/.test(src)
+    && src.includes("borderRadius: '5px 0 0 5px'"))
+  ok('保存分体：自动档把整圈边框染成 accent',
+    src.includes("store.saveMode === 'auto' ? { borderColor: C.accent } : null"))
+  ok('组内按钮不再靠移除 borderColor 关掉高亮', !/S\.btnOn\s*:\s*null/.test(src))
+  ok('组内按钮吃掉浏览器焦点框（否则点过的开关会留白圈）', /outline: 'none'/.test(src))
+
+  // 「保存」分体按钮：手动 / 自动两档
+  const saveChecks = [
+    ['保存方式默认手动，并进 localStorage', src.includes("saveMode: 'manual'")
+      && src.includes("saveMode: state.saveMode === 'auto' ? 'auto' : 'manual'")
+      && src.includes("saveMode: saved.saveMode === 'auto' ? 'auto' : 'manual'")],
+    ['两档文案就在按钮上（手动保存 / 自动保存）',
+      src.includes("['manual', '手动保存']") && src.includes("['auto', '自动保存']")
+      && src.includes("store.saveMode === 'auto' ? '自动保存' : '手动保存'")],
+    ['小三角开合与菜单项（✓ 标当前档）',
+      src.includes('patch({ saveMenu: !store.saveMenu, compileMenu: false })')
+      && src.includes("(store.saveMode === pair[0] ? '✓ ' : '') + pair[1]")],
+    ['点别处 / Esc 关菜单', /}, \[store\.saveMenu\]\)/.test(src)],
+    ['下拉与按钮等宽（left/right 都为 0，不设 minWidth）', (function () {
+      const at = src.indexOf('saveMenu: {')
+      const seg = at > -1 ? src.slice(at, at + 300) : ''
+      return seg.includes('left: 0') && seg.includes('right: 0') && !seg.includes('minWidth')
+    })()],
+    ['自动保存的唯一触发点：标签变脏', src.includes('if (next && next.dirty === true) scheduleAutoSave(id)')],
+    ['自动模式才存、停手 1.2 秒', src.includes("if (state.saveMode !== 'auto') return") && src.includes('}, 1200)')],
+    ['切到自动时立刻把脏标签存一次', src.includes("if (next === 'auto' && live && live.dirty) saveTab(live.id)")],
+    ['换项目清掉待触发的自动保存', src.includes('if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null }')]
+  ]
+  for (const [label, passed] of saveChecks) passed ? ok(label) : bad(label)
+  ok('store 默认 saveMode = manual', bundle.__store.saveMode === 'manual')
+} catch (error) {
+  bad('自编测试抛错', String(error.message))
 }
 
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)
