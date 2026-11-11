@@ -1162,6 +1162,13 @@ try {
   ok('DOM 顺序里找不到 → 中心点反查失败给 -1', reader(stray) === -1)
   const view2 = Object.assign({}, view, { posAtCoords: () => 95 })
   ok('中心点反查可用时能算出第 10 行', bundle.__lineReaderFor(view2)(stray) === 10)
+
+  // 跳转要"看得见"：收起盖住编辑区的浮层 + 让目标行闪一下
+  ok('jumpTo 会收起文件树/提纲/右键菜单并标记目标行',
+    /if \(state\.treeOpen\) next\.treeOpen = false/.test(src)
+    && /flashLine: line, flashAt: Date\.now\(\)/.test(src))
+  ok('CM 与回退编辑器都会闪目标行（两个 flashAt effect）',
+    (src.match(/\}, \[store\.flashAt\]\)/g) || []).length === 2)
 } catch (error) {
   bad('视口/行号测试抛错', String(error.message))
 }

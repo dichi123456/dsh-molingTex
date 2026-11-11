@@ -128,6 +128,13 @@ console.log('5) 编译 → PDF → 清理')
   else {
     const value = compile.json.value
     ok('compile', `${value.engine} / ${(value.durationMs / 1000).toFixed(1)}s`)
+
+    // 编译辅助文件也要出现在文件树里（之前只认 .tex/.bib/.md/.pdf，用户以为插件失灵）
+    const auxTree = await call('POST', 'tree', { root: fixtures })
+    const auxList = auxTree.json && auxTree.json.ok ? auxTree.json.value.files.map((file) => file.rel) : []
+    auxList.includes('hello-en.aux') && auxList.includes('hello-en.log')
+      ? ok('编译辅助文件进树（.aux / .log）', auxList.filter((rel) => /\.(aux|log|toc|out)$/.test(rel)).join(',') || auxList.length + ' 个文件')
+      : bad('辅助文件没进树', auxList.join(',').slice(0, 140))
     const pdf = await call('POST', 'pdf', { root: fixtures, path: value.pdfRel })
     const magic = pdf.json && pdf.json.ok ? Buffer.from(pdf.json.value.base64, 'base64').slice(0, 4).toString('latin1') : ''
     magic === '%PDF' ? ok('pdf 返回 base64', `${pdf.json.value.bytes} 字节`) : bad('pdf', JSON.stringify(pdf.json).slice(0, 120))
