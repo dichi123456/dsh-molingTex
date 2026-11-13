@@ -17,7 +17,7 @@ github:dichi123456/dsh-molingTex
 ### 指定版本（Release 安装包）
 
 ```
-plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.6.5/dsh-plugin-moling-latex-0.6.5.tgz
+plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.6.6/dsh-plugin-moling-latex-0.6.6.tgz
 ```
 
 ### 本地目录
@@ -51,7 +51,7 @@ plugin_manager install_bundle  <本仓库本地路径>
 **与对话框联动**
 
 - **连接状态胶囊**：项目是否已在 DSH 工作区（绿 / 黄 / 灰），未连接时点一下直接加入；
-- **发送选中内容**：编辑器右键把选区连同行号送进当前会话的输入框（不自动发送）。
+- **发送选中内容**：编辑器右键「发送选中内容到对话框」，把选区以 **DSH 原生 `@` 引用 chip**（圆角方框，如 `Safety_MARL框架.tex:20`）送进当前会话输入框，不自动发送。chip 通过会话作用域的 `slash/input-insert-reference` 事件生成（不是伪造的纯文本）；造不出 chip 时自动退回一行纯文本引用，并在状态栏说明原因。
 
 ## Agent 工具
 
