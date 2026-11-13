@@ -676,6 +676,7 @@ try {
   const store = bundle.__store
   const connectionOf = bundle.__connectionOf
   const normalizePath = bundle.__normalizePath
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   const render = () => ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
   store.view = 'workbench'
   store.root = 'E:/proj/paper'
@@ -721,10 +722,63 @@ try {
   menuHtml.includes('发送选中内容到对话框')
     ? ok('右键菜单有「发送选中内容到对话框」')
     : bad('右键菜单缺发送项')
+  !menuHtml.includes('只发文件引用')
+    ? ok('「带全文」那个形态已去掉（只留一行引用）')
+    : bad('右键菜单还留着旧的带全文形态')
 
-  const payload = bundle.__formatSelectionPayload('main.tex', 2, 3, 'a & b\n')
-  const payloadOk = payload.includes('> 来自 main.tex 第 2–3 行') && payload.includes('```latex\na & b\n```')
-  payloadOk ? ok('消息体带出处与 latex 代码块') : bad('消息体格式不对', JSON.stringify(payload))
+  // 发出去的形态：一行 `@文件:行范围 「选中内容」` —— 引用 + 选中文字，不糊代码块
+  const compact = bundle.__formatSelectionCompact('main.tex', 20, 20, '动作值函数')
+  compact.startsWith('@main.tex:20')
+    && compact.includes('`动作值函数`')
+    && !compact.includes('```')
+    && compact.split('\n')[0] === '@main.tex:20 `动作值函数`'
+    ? ok('一行：@文件:行范围 + 选中的那段文字') : bad('紧凑形态不对', JSON.stringify(compact))
+  bundle.__formatSelectionCompact('main.tex', 5, 5, '  a\n  b  ').split('\n')[0] === '@main.tex:5 `a b`'
+    ? ok('选中文字压成一行（换行/缩进归一）') : bad('选中文字没归一')
+  bundle.__formatSelectionCompact('main.tex', 5, 5, 'x'.repeat(200)).length < 200
+    ? ok('超长选中内容会截断（≤120 字）') : bad('超长没截断')
+  !bundle.__formatSelectionCompact('main.tex', 5, 5, '').includes('`')
+    ? ok('没选中文字时只剩引用（不出现空反引号）') : bad('空选区还带反引号')
+  bundle.__formatSelectionCompact('main.tex', 5, 5, 'a`b').split('\n')[0].includes('ˋ')
+    ? ok('选中文字里的反引号会被替换（不破格式）') : bad('反引号没处理')
+  bundle.__formatSelectionMention('sub\\a b.tex', 1, 2) === '@sub/a b.tex:1-2'
+    ? ok('引用里反斜杠转正斜杠') : bad('反斜杠没转')
+
+  // 真 chip：走作用域事件 slash/input-insert-reference（这是唯一能造 occurrence 的入口）
+  ok('发了 slash/input-insert-reference 事件',
+    src.includes("actx.bail(actx, 'slash/input-insert-reference'")
+    && src.includes("appearance: 'file'"))
+  ok('chip 之前先 setDraft 把 @引用 写进草稿',
+    /actions\.setDraft\(draft\)[\s\S]{0,400}slash\/input-insert-reference/.test(src))
+  ok('span 用 setDraft 之后的 draftRev（CAS 不能拿旧 rev）',
+    src.includes('draftRev: rev') && src.includes('snapshot.draftRev'))
+  ok('chip 失败要能退回纯文本（不能没反应）',
+    src.includes('chip.ok') && src.includes("how: 'chip 方框'"))
+  ok('chip 失败原因写进状态栏（不再静默）', src.includes("'｜chip 未成：' + ((chip && chip.why) || '未知')"))
+  ok('setDraft 之后等 React 喂回新 rev 再发事件（同帧读必是旧值）',
+    src.includes('var waitRev = function') && /setTimeout\(waitRev, 16\)/.test(src))
+  ok('等不到新 rev 就撤回草稿', /等到新 draftRev[\s\S]{0,300}actions\.setDraft\(base\)/.test(src))
+  ok('事件没被接受时把草稿撤回（不留半截）',
+    /if \(!ok\)[\s\S]{0,200}actions\.setDraft\(base\)/.test(src))
+  ok('会话 id 从 tab body 的注入属性里拿', src.includes("props.sessionId || props.session"))
+  ok('inject 里声明了 sessions（不声明就拿不到服务）',
+    /var inject = \[[^\]]*'sessions'/.test(src))
+  // 注入面在 props.props 里（Workbench 收到的是 { props, store } 包装层）
+  ok('注入属性统一走 injected(props)（读包装层会永远 undefined）',
+    /function injected\(props\)/.test(src)
+    && src.includes('injected(props).inputActions')
+    && !/var actions = props\.inputActions/.test(src))
+  ok('草稿/draftRev 从 useInput 桥接的 store.inputSnap 读（inputActions 上没有 state）',
+    src.includes('store.inputSnap') && src.includes("'读不到输入框草稿（useInput 没注入）'"))
+  ok('useInput 只在渲染期调（桥组件 InputBridge），不在事件处理里调',
+    /function InputBridge\(props\)[\s\S]{0,200}props\.useInput\(/.test(src)
+    && !/sendSelection[\s\S]{0,2000}props\.useInput\(/.test(src))
+  // 带全文的格式化函数仍在（导出给测试/未来用），但**右键菜单不再走它**
+  const full = bundle.__formatSelectionPayload('main.tex', 2, 3, 'a & b\n')
+  full.includes('@main.tex:2-3') && full.includes('```latex\na & b\n```')
+    ? ok('带全文形态的格式化函数仍可用（菜单不再调用）') : bad('带全文格式化坏了')
+  !/formatSelectionPayload\(rel/.test(src.slice(src.indexOf('var sendSelection'), src.indexOf('var sendSelection') + 3000))
+    ? ok('sendSelection 不再调用带全文形态') : bad('sendSelection 还在调用带全文形态')
 
   store.tabs = []
   store.activeId = null
