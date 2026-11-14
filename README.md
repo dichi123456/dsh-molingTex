@@ -1,6 +1,6 @@
 # dsh-plugin-moling-latex
 
-**墨灵 LaTeX 的 DSH 插件**：在 DSH 右侧栏打开墨灵TeX 工作台 —— 目录树 · 编辑 · 编译 · 日志 · PDF 预览 · SyncTeX 双向定位 · **21 个内置模板**；另带 5 个 Agent 工具，让模型直接编译论文、读报错、定位源码行。
+**墨灵 LaTeX 的 DSH 插件**：在 DSH 右侧栏打开墨灵TeX 工作台 —— 目录树 · 编辑 · **LaTeX 自动补全** · 编译 · 日志 · PDF 预览 · SyncTeX 双向定位 · **21 个内置模板**；另带 5 个 Agent 工具，让模型直接编译论文、读报错、定位源码行。
 
 ## 安装
 
@@ -17,7 +17,7 @@ github:dichi123456/dsh-molingTex
 ### 指定版本（Release 安装包）
 
 ```
-plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.7.0/dsh-plugin-moling-latex-0.7.0.tgz
+plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.8.0/dsh-plugin-moling-latex-0.8.0.tgz
 ```
 
 ### 本地目录
@@ -46,6 +46,12 @@ plugin_manager install_bundle  <本仓库本地路径>
 **工作台**
 
 - 左侧 **CodeMirror 6** 编辑器：LaTeX 语法高亮、行号、软换行、多标签；`F5` 编译、`Ctrl+S` 保存、`Ctrl+F` 搜索；
+- **LaTeX 自动补全**（边打边弹，`Ctrl+Space` 手动唤出，`Tab` / `Enter` 选中，带占位符的项按 `Tab` 逐个跳字段）：
+  - `\begin{` / `\end{` → 50 个常用环境；`\begin{figure` 会顺手补 `\end{figure}` 并把光标放在中间；
+  - `\` 开头 → 100+ 常用命令（`\section` / `\textbf` / `\frac` / `\includegraphics` …），带参数的项直接是完整模板；
+  - `\ref{` `\eqref{` … → **当前文档里的 `\label{...}`**；`\cite{` … → 当前文档里的 `\bibitem{...}`（逗号多引用只补最后一段）；
+  - `\usepackage{` / `\documentclass{` → 常用宏包与文档类（`ctexart` / `IEEEtran` / `cas-dc` …）；
+  - 词表在浏览器侧（`lib/client.js`），补全弹窗配色跟随主题，不额外写死颜色；
 - **进入项目文件夹自动打开主 tex**：优先 `main.tex`，其次「你上次在这个项目里打开过的 .tex」，再次唯一/根目录唯一的 .tex，最后取体积最大的那个（没有 .tex 才什么都不开）；**切到另一个项目文件夹时，上一个项目打开的 tex 标签、PDF 预览与编译日志会一并关掉**（同一个项目重进不受影响）；
 - **外部改动自动同步**：大模型（或任何编辑器）在磁盘上改了正在看的 tex，2 秒内自动进编辑区，**被改的行铺一层浅绿**、几秒后淡出，滚动位置不跳；标签里有未保存改动时只提醒、绝不覆盖；
 - 顶栏：`首页`、工作区切换、`树 | 提纲`、`换行 | 保存 | 新建 | 自编`、连接状态胶囊、分体编译按钮（左键即编译，小三角切 快速 / 完整 / 从头）；**`保存` 是分体按钮**：左键立刻存（`Ctrl+S` 同效），小三角切 **手动保存 / 自动保存**（自动 = 停手 1.2 秒存一次）；**`自编` = 自动编译开关**：开着时保存或大模型改完文件后自动编一次（防抖，正忙不排队）；

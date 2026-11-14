@@ -1563,5 +1563,119 @@ try {
   bad('模板库测试抛错', String(error.message))
 }
 
+console.log('28) LaTeX 自动补全：命令 / 环境 / 引用 / 宏包')
+
+try {
+  const complete = bundle.__completeLatex
+  const labels = bundle.__LATEX_COMMANDS.map((item) => item[0])
+  const envs = bundle.__LATEX_ENVIRONMENTS.map((item) => item[0])
+
+  // 1) 环境名：\begin{fi → figure；插入时顺手补 \end{}
+  const envFigure = complete({ text: '\\begin{fi', pos: '\\begin{fi'.length })
+  envFigure && envFigure.from === 7 && envFigure.options.some((item) => item.label === 'figure')
+    ? ok('\\begin{fi → figure（from 落在环境名开头）', JSON.stringify(envFigure.from))
+    : bad('环境名没补出来', JSON.stringify(envFigure))
+  const figureOption = envFigure && envFigure.options.find((item) => item.label === 'figure')
+  figureOption && typeof figureOption.snippet === 'string'
+    && figureOption.snippet.startsWith('figure}')
+    && figureOption.snippet.includes('\\end{figure}')
+    ? ok('\\begin{figure 顺手补 \\end{figure}（光标留在中间）')
+    : bad('环境 snippet 不对', JSON.stringify(figureOption && figureOption.snippet))
+
+  // 已经打了右花括号：只补名字，别多出一个 }
+  const closedText = '\\begin{figure}'
+  const envClosed = complete({ text: closedText, pos: closedText.indexOf('}') })
+  envClosed && envClosed.to === closedText.length
+    && envClosed.options.every((item) => item.to === undefined || item.to === closedText.length)
+    ? ok('已有 } 时一起吃掉，不多补一个花括号')
+    : bad('右花括号处理不对', JSON.stringify(envClosed && envClosed.to))
+
+  // \end{ → 全部环境名，且不带 snippet（不收尾）
+  const envEnd = complete({ text: '\\end{', pos: 5 })
+  envEnd && envEnd.options.length === envs.length
+    && envEnd.options.every((item) => !item.snippet)
+    ? ok('\\end{ → 全部环境名，不带 snippet', String(envEnd.options.length))
+    : bad('\\end{ 处理不对', JSON.stringify(envEnd && envEnd.options.length))
+
+  // 2) 命令前缀
+  const sec = complete({ text: '\\su', pos: 3 })
+  sec && sec.from === 0
+    && sec.options.map((item) => item.label).join(',') === '\\subsection,\\subsubsection,\\sum,\\subset'
+    ? ok('\\su → subsection / subsubsection / sum / subset')
+    : bad('命令前缀过滤不对', JSON.stringify(sec && sec.options.map((item) => item.label)))
+  const frac = complete({ text: '\\fr', pos: 3 })
+  const fracOption = frac && frac.options[0]
+  fracOption && fracOption.snippet && fracOption.snippet.includes('${1:') && fracOption.snippet.includes('\\frac{')
+    ? ok('带占位符的命令给 snippet（Tab 跳字段）')
+    : bad('snippet 没带上', JSON.stringify(fracOption))
+  const emptyPrefix = complete({ text: '\\', pos: 1 })
+  emptyPrefix && emptyPrefix.options.length === labels.length
+    ? ok('只打一个反斜杠 → 全部命令', String(emptyPrefix.options.length))
+    : bad('空前缀没给全量', JSON.stringify(emptyPrefix && emptyPrefix.options.length))
+
+  // 3) \ref{ → 文档里扫出来的 \label
+  const doc = '\\section{引言}\\label{sec:intro}\n\\section{方法}\\label{sec:method}\n\\ref{'
+  const ref = complete({ text: doc, pos: doc.length })
+  ref && ref.options.map((item) => item.label).join(',') === 'sec:intro,sec:method'
+    ? ok('\\ref{ → 文档内 \\label（去重保序）')
+    : bad('label 没扫出来', JSON.stringify(ref && ref.options.map((item) => item.label)))
+  const noLabel = complete({ text: '\\ref{', pos: 5 })
+  noLabel === null ? ok('没有 label 时不弹空框（返回 null）') : bad('空标签还弹框', JSON.stringify(noLabel))
+
+  // 4) \cite{a,b → 只补最后一段，from 落在逗号后面
+  const citeText = '\\bibitem{knuth1984} \\bibitem{lamport1994} \\cite{knuth1984,la'
+  const cite = complete({ text: citeText, pos: citeText.length })
+  cite && cite.from === citeText.length - 2 && cite.options.length === 2
+    && cite.options[0].label === 'knuth1984'
+    ? ok('\\cite{a,b → 只替换最后一段（不吞掉前面的 key）', String(cite.from))
+    : bad('多引用补全位置不对', JSON.stringify(cite && cite.from))
+
+  // 5) 宏包 / 文档类
+  const pkg = complete({ text: '\\usepackage{ams', pos: '\\usepackage{ams'.length })
+  pkg && pkg.options.map((item) => item.label).join(',') === 'amsmath,amssymb,amsthm'
+    ? ok('\\usepackage{ams → amsmath / amssymb / amsthm')
+    : bad('宏包补全不对', JSON.stringify(pkg && pkg.options.map((item) => item.label)))
+  const cls = complete({ text: '\\documentclass{ctex', pos: '\\documentclass{ctex'.length })
+  cls && cls.options.some((item) => item.label === 'ctexart')
+    ? ok('\\documentclass{ctex → ctexart / ctexrep / ctexbook')
+    : bad('文档类补全不对', JSON.stringify(cls && cls.options.map((item) => item.label)))
+
+  // 6) 不该弹的时候不弹
+  const plain = complete({ text: '普通文字 and more', pos: 18 })
+  plain === null ? ok('普通文字不弹补全（返回 null）') : bad('普通文字也弹了', JSON.stringify(plain))
+  const percent = complete({ text: '% 注释里的 \\su', pos: 10 })
+  percent && percent.options.length > 0 && percent.options.every((item) => item.label.indexOf('\\su') === 0)
+    ? ok('注释行里的命令照常补（不做语法分析，够用即可）')
+    : bad('注释行没补', JSON.stringify(percent && percent.options.map((item) => item.label)))
+
+  // 7) 接线与产物
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const entrySrc = readFileSync(new URL('../lib/vendor/entry.js', import.meta.url), 'utf8')
+  const kernelSrc = readFileSync(new URL('../lib/vendor/cm6.js', import.meta.url), 'utf8')
+  const wiring = [
+    ['内核源码补回了 getSegments（重建别丢行内上色）', entrySrc.includes('getSegments')],
+    ['内核源码有补全扩展 completionExtension', entrySrc.includes('completionExtension')],
+    ['内核产物含 onComplete（重建后确实带上了补全）', kernelSrc.includes('onComplete')],
+    ['编辑器把补全源接进 create（onComplete → completeLatex）',
+      src.includes('onComplete: function (context)') && src.includes('return completeLatex({ text: context.state.doc.toString(), pos: context.pos })')],
+    ['KERNEL_VERSION 加一（打掉浏览器旧缓存）', src.includes("var KERNEL_VERSION = '2'")],
+    ['补全抛错时兜底返回 null（不让补全把编辑器搞崩）',
+      /onComplete: function \(context\) \{\s*try \{/.test(src)],
+    ['补全弹窗配色复用主题 token（不额外写死颜色）',
+      entrySrc.includes('.cm-tooltip-autocomplete') && !/#fff/.test(entrySrc.slice(entrySrc.indexOf('.cm-tooltip')))],
+    // 补全源必须只造一次：languageData 的 provider 每次读 facet 都会被调，
+    // 在里面 new 函数 → CM 认为源换了 → 每帧重启补全 → 弹窗永远出不来（真踩过）。
+    ['补全源只造一次（provider 返回同一个数组）',
+      entrySrc.includes('const data = [{ autocomplete: source }]') && entrySrc.includes('EditorState.languageData.of(() => data)')],
+    ['补全源不在 provider 里现造函数（否则弹窗永不出现）',
+      !/languageData\.of\(\(\)\s*=>\s*\[\{[^}]*autocomplete:\s*\(/.test(entrySrc)],
+    ['补全表规模够用（命令 ≥ 80 / 环境 ≥ 40 / 宏包 ≥ 50）',
+      labels.length >= 80 && envs.length >= 40 && bundle.__LATEX_PACKAGES.length >= 50]
+  ]
+  for (const [label, passed] of wiring) passed ? ok(label) : bad(label)
+} catch (error) {
+  bad('自动补全测试抛错', String(error.message))
+}
+
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)
 process.exit(failures === 0 ? 0 : 1)
