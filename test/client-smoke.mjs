@@ -1666,7 +1666,18 @@ try {
     ['模板区样式走主题 token（不硬编码白底）',
       /\.ml-tpl-card\{[\s\S]{0,400}--dsw-alias-bg-layer-1/.test(src) && !/\.ml-tpl-(card|grid|search|modal)\{[^}]*#fff/i.test(src)],
     ['忙态不可重复点（防连点落地两份）', src.includes('if (state.templateBusy) return') && src.includes('disabled: busy || !target')],
-    ['Esc 关闭（第二步先回列表）', src.includes("event.key !== 'Escape'") && src.includes("if (state.templateStep === 'target') patch({ templateStep: 'list', templatePick: null })")]
+    ['Esc 关闭（第二步先回列表）', src.includes("event.key !== 'Escape'") && src.includes("if (state.templateStep === 'target') patch({ templateStep: 'list', templatePick: null })")],
+    // 窗口尺寸固定：不随模板数量 / 步骤变化（用户要求「固定住，让其不变化」）
+    ['弹窗高度固定（height 而非 max-height）',
+      /\.ml-modal\{[^}]*height:min\(620px,88%\)/.test(src) && !/\.ml-modal\{[^}]*max-height/.test(src)],
+    ['列表步：内容区不外滚，只有卡片网格内部滚',
+      /\.ml-modal-body\{[^}]*overflow:hidden/.test(src) && /\.ml-tpl-grid\{[^}]*overflow:auto/.test(src)],
+    ['第二步（新建文件）恢复整体滚动',
+      /\.ml-modal-body-target\{[^}]*overflow:auto/.test(src) && src.includes("step === 'target' ? ' ml-modal-body-target' : ''")],
+    ['「新建中文文档」卡片固定在网格外（不随滚动跑）',
+      src.includes("'ml-card ml-tpl-footcard'") && /\.ml-tpl-footcard\{[^}]*flex:none/.test(src)],
+    ['左右两栏等高撑满（分类导航与网格各自滚）',
+      /\.ml-tpl-layout\{[^}]*align-items:stretch/.test(src) && /\.ml-tpl-nav\{[^}]*overflow:auto/.test(src) && /\.ml-tpl-main\{[^}]*min-height:0/.test(src)]
   ]
   for (const [label, passed] of wiring) passed ? ok(label) : bad(label)
 } catch (error) {

@@ -1,4 +1,4 @@
-﻿# dsh-plugin-moling-latex
+# dsh-plugin-moling-latex
 
 **墨灵 LaTeX 的 DSH 插件**：在 DSH 右侧栏打开墨灵TeX 工作台 —— 目录树 · 编辑 · **LaTeX 自动补全** · 编译 · 日志 · PDF 预览 · SyncTeX 双向定位 · **21 个内置模板**；另带 5 个 Agent 工具，让模型直接编译论文、读报错、定位源码行。
 
@@ -17,7 +17,7 @@ github:dichi123456/dsh-molingTex
 ### 指定版本（Release 安装包）
 
 ```
-plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.8.2/dsh-plugin-moling-latex-0.8.2.tgz
+plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.8.3/dsh-plugin-moling-latex-0.8.3.tgz
 ```
 
 ### 本地目录
@@ -38,6 +38,8 @@ plugin_manager install_bundle  <本仓库本地路径>
 **模板库**：启动页「模板」区只放一个入口（`浏览模板库`，旁边还有 `新建中文文档` 的 ctexart 骨架），点开是**二级弹窗** —— 左边分类导航（全部模板 / 中文论文 / 英文论文 / 简历 / 幻灯片 / 报告），右边搜索框（名称/描述/引擎都参与匹配）+ 卡片网格，共 21 个内置模板（中文/英文论文、IEEE、Elsevier、Wiley、国赛论文、简历、Beamer 幻灯片、实验报告）。
 
 点一张卡进入**第二步「新建文件」**：显示选中的模板与它的引擎/文件数，`选择文件夹…` 调系统目录选择器**让你自己挑存放位置**（会先把该目录登记进白名单，再允许落地），选好点 `创建` 才真正写盘。`返回` 回列表，`Esc` 逐级退出，点遮罩关闭。
+
+弹窗**尺寸固定**（`min(620px, 88%)` 高），切分类、换搜索词、进出第二步都不会变大变小；模板多的时候只有卡片网格内部滚动，左边的分类导航和底部的「新建中文文档」入口始终在位。
 
 - 主文件统一叫 `main.tex`；`.cls` / `.sty` / `.bib` / `.bst` 与图片按原始相对路径逐字节写出（国赛模板的 `figures/`、Elsevier 的 `figs/` 都在）；
 - 目标目录里已经有 `main.tex` 时**改落到 `<模板id>[-n]/` 子目录**，绝不覆盖已有项目；
