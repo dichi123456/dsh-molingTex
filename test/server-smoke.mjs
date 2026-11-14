@@ -367,12 +367,12 @@ console.log('10) 模板库（templates / use-template）')
       : bad('返回结构不对', JSON.stringify(usedValue.template))
   }
 
-  // 同一目录再落一次：main.tex 已存在 → 改落 <root>/cumcm，绝不覆盖已有项目
+  // 同一目录再落一次：目录已经非空 → 改落 <root>/cumcm，绝不把模板散进已有项目
   const again = await call('POST', 'use-template', { root: dir, template: 'cumcm' })
   const againValue = again.json && again.json.ok ? again.json.value : null
   againValue && againValue.root !== (usedValue && usedValue.root) && againValue.root === join(dir, 'cumcm')
-    ? ok('重名换目录，不覆盖已有 main.tex', againValue.root.replace(dir, '.'))
-    : bad('重名没换目录', String(againValue && againValue.root))
+    ? ok('非空目录换子目录，不往已有项目里散模板文件', againValue.root.replace(dir, '.'))
+    : bad('非空目录没换子目录', String(againValue && againValue.root))
 
   // 再落第三次：cumcm 子目录也占了 → 递增到 cumcm-2（不互相覆盖）
   const again2 = await call('POST', 'use-template', { root: dir, template: 'cumcm' })
@@ -388,6 +388,28 @@ console.log('10) 模板库（templates / use-template）')
   thirdValue && thirdValue.root !== dir && readFileSync(join(dir, 'main.tex'), 'utf8').includes('我自己的主文件')
     ? ok('不碰用户已有的 main.tex', thirdValue.root.replace(dir, '.'))
     : bad('冲掉了已有 main.tex', String(thirdValue && thirdValue.root))
+
+  // 目录非空但**没有 main.tex**（例如只有笔记/图片）→ 同样换子目录，
+  // 否则 cls/sty/figures 会散在用户目录根上（真实踩过的坑）
+  const mixed = mkdtempSync(join(tmpdir(), 'moling-tpl-mixed-'))
+  writeFileSync(join(mixed, 'notes.md'), '# 我自己的笔记\n')
+  await call('POST', 'open-root', { root: mixed })
+  const mixedUsed = await call('POST', 'use-template', { root: mixed, template: 'zh-article' })
+  const mixedValue = mixedUsed.json && mixedUsed.json.ok ? mixedUsed.json.value : null
+  mixedValue && mixedValue.root === join(mixed, 'zh-article') && existsSync(join(mixed, 'notes.md'))
+    ? ok('目录非空（无 main.tex）也落子目录，不动原有文件', mixedValue.root.replace(mixed, '.'))
+    : bad('非空目录被模板污染', String(mixedValue && mixedValue.root))
+  rmSync(mixed, { recursive: true, force: true })
+
+  // 空目录（用户明确新建的空文件夹）→ 直接落进去，不多套一层
+  const emptyDir = mkdtempSync(join(tmpdir(), 'moling-tpl-empty-'))
+  await call('POST', 'open-root', { root: emptyDir })
+  const emptyUsed = await call('POST', 'use-template', { root: emptyDir, template: 'zh-article' })
+  const emptyValue = emptyUsed.json && emptyUsed.json.ok ? emptyUsed.json.value : null
+  emptyValue && emptyValue.root === emptyDir
+    ? ok('空目录直接落地（不多套一层子目录）')
+    : bad('空目录被多套了一层', String(emptyValue && emptyValue.root))
+  rmSync(emptyDir, { recursive: true, force: true })
 
   // 未知模板 / 空模板 id：明确报错，不静默成功
   const unknown = await call('POST', 'use-template', { root: dir, template: 'no-such-template' })

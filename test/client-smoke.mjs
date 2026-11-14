@@ -16,7 +16,23 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 let failures = 0
-const ok = (label, detail = '') => console.log(`  ✓ ${label}${detail ? ` — ${detail}` : ''}`)
+/**
+ * 打勾。第二个参数是**布尔**时当断言用（false → 记失败），
+ * 其余类型（字符串/数字/对象）只当附注打印。
+ *
+ * 为什么这么写：早期有一批断言写成 `ok('xxx', 条件)`，而 ok 当时无条件打勾，
+ * 于是条件为 false 也只是少打一行「— true」，**永远是绿的**。改成按类型分派后，
+ * 老写法自动变成真断言，不用逐个改写。
+ */
+const ok = (label, cond) => {
+  if (typeof cond === 'boolean') {
+    if (!cond) { failures++; console.log(`  ✗ ${label}`); return }
+    console.log(`  ✓ ${label}`)
+    return
+  }
+  const detail = cond === undefined || cond === null || cond === '' ? '' : String(cond)
+  console.log(`  ✓ ${label}${detail ? ` — ${detail}` : ''}`)
+}
 const bad = (label, detail = '') => { failures++; console.log(`  ✗ ${label}${detail ? ` — ${detail}` : ''}`) }
 const skip = (label) => console.log(`  – ${label}（跳过）`)
 
@@ -223,10 +239,11 @@ try {
     ['tex/pdf 分隔条可拖动', html.includes('col-resize')],
     ['挂载 CodeMirror 宿主', html.includes('ml-cm')],
     ['渲染出 1~6 行行号', ed.includes('data-line="1"') && ed.includes('data-line="6"')],
-    ['命令着色（brand-primary）', ed.includes('dsw-alias-brand-primary')],
-    ['环境名着色（state-error-primary）', ed.includes('dsw-alias-state-error-primary')],
-    ['引用键着色（state-warn-primary）', ed.includes('dsw-alias-state-warn-primary')],
-    ['数学着色（state-success-primary）', ed.includes('dsw-alias-state-success-primary')],
+    ['命令着色（桌面版紫 #c678dd）', ed.includes('#c678dd')],
+    ['环境名着色（同桌面版命令紫，不再是红色）', ed.includes('dsw-alias-label-secondary') && !ed.includes('dsw-alias-state-error-primary, #e06c5a); font-weight: 500')],
+    ['引用键着色（桌面版转义青 #56b6c2）', ed.includes('#56b6c2')],
+    ['数学着色（桌面版字符串绿 #98c379）', ed.includes('#98c379')],
+    ['数字着色（桌面版数字橙 #d19a66）', ed.includes('#d19a66')],
     ['注释着色（label-secondary）', ed.includes('dsw-alias-label-secondary')],
     ['章节行加粗', ed.includes('font-weight:600')],
     ['数学环境跨行传递（equation 内无未闭合）', !ed.includes('undefined')],
@@ -260,14 +277,14 @@ try {
   const envSeg = find(1, 'align')
   const cmdSeg = find(1, '\\begin')
   const endEnv = find(3, 'align')
-  const line3AllMath = lines[2].segments.length > 0 && lines[2].segments.every((segment) => segment.style && /state-success/.test(segment.style.color))
+  const line3AllMath = lines[2].segments.length > 0 && lines[2].segments.every((segment) => segment.style && /#98c379/.test(segment.style.color))
 
   const checks = [
-    ['\\cite 命令着色', Boolean(cmdSeg.style && /brand-primary/.test(cmdSeg.style.color))],
-    ['\\cite 键单独着色', Boolean(keySeg.style && /state-warn/.test(keySeg.style.color))],
-    ['\\begin 的 align 环境名着色', Boolean(envSeg.style && /state-error/.test(envSeg.style.color))],
-    ['环境内公式跨行按数学着色', line3AllMath],
-    ['\\end 的环境名同样着色', Boolean(endEnv.style && /state-error/.test(endEnv.style.color))],
+    ['\\cite 命令着色（桌面版紫 #c678dd）', Boolean(cmdSeg.style && /#c678dd/.test(cmdSeg.style.color))],
+    ['\\cite 键单独着色（桌面版转义青 #56b6c2）', Boolean(keySeg.style && /#56b6c2/.test(keySeg.style.color))],
+    ['\\begin 的 align 环境名着色（桌面版命令紫 #c678dd）', Boolean(envSeg.style && /#c678dd/.test(envSeg.style.color))],
+    ['环境内公式跨行按数学着色（桌面版字符串绿 #98c379）', line3AllMath],
+    ['\\end 的环境名同样着色', Boolean(endEnv.style && /#c678dd/.test(endEnv.style.color))],
     ['\\% 转义不会把整行变注释', lines[4].segments.some((segment) => segment.style === null && segment.text.indexOf('的样本') >= 0)],
     ['\\ref 键着色', Boolean((find(4, 'sec:intro') || {}).style)],
     ['行数一致', lines.length === 5]
@@ -466,7 +483,7 @@ try {
     ['内核地址带版本号', /[?&]v=\d/.test(assetUrl)],
     ['默认挂载 CodeMirror 宿主', html.includes('ml-cm')],
     ['没内核时退回 textarea', withoutKernel.includes('<textarea')],
-    ['回退实现仍有语法着色', withoutKernel.includes('dsw-alias-brand-primary')],
+    ['回退实现仍有语法着色', withoutKernel.includes('#c678dd')],
     ['回退实现仍有行号 class', withoutKernel.includes('ml-hl-num')],
     ['编辑器容器在位', html.includes('ml-editor')],
     ['编辑器跳转桥可注册', typeof bundle.__editorBridge === 'object' && 'jumpTo' in bundle.__editorBridge]
@@ -753,19 +770,23 @@ try {
   ok('发了 slash/input-insert-reference 事件',
     src.includes("actx.bail(actx, 'slash/input-insert-reference'")
     && src.includes("appearance: 'file'"))
-  ok('chip 之前先 setDraft 把 @引用 写进草稿',
-    /actions\.setDraft\(draft\)[\s\S]{0,400}slash\/input-insert-reference/.test(src))
+  // 顺序断言用 indexOf，别用固定字符窗口：中间隔多少行会随注释增长而变
+  const setDraftAt = src.indexOf('actions.setDraft(draft)')
+  const bailAt = src.indexOf("actx.bail(actx, 'slash/input-insert-reference'")
+  ok('chip 之前先 setDraft 把 @引用 写进草稿', setDraftAt > 0 && bailAt > setDraftAt)
   ok('span 用 setDraft 之后的 draftRev（CAS 不能拿旧 rev）',
-    src.includes('draftRev: rev') && src.includes('snapshot.draftRev'))
+    src.includes('draftRev: rev')
+    && src.includes("typeof after.draftRev === 'number'"))
   ok('chip 失败要能退回纯文本（不能没反应）',
     src.includes('chip.ok') && src.includes("how: 'chip 方框'"))
   ok('chip 失败原因写进状态栏（不再静默）', src.includes("'｜chip 未成：' + ((chip && chip.why) || '未知')"))
   ok('setDraft 之后等 React 喂回新 rev 再发事件（同帧读必是旧值）',
     src.includes('var waitRev = function') && /setTimeout\(waitRev, 16\)/.test(src))
-  ok('等不到新 rev 就撤回草稿', /等到新 draftRev[\s\S]{0,300}actions\.setDraft\(base\)/.test(src))
+  ok('等不到新 rev 就撤回草稿', /actions\.setDraft\(base\)[\s\S]{0,300}等不到新 draftRev/.test(src))
   ok('事件没被接受时把草稿撤回（不留半截）',
     /if \(!ok\)[\s\S]{0,200}actions\.setDraft\(base\)/.test(src))
-  ok('会话 id 从 tab body 的注入属性里拿', src.includes("props.sessionId || props.session"))
+  ok('会话 id 从 tab body 的注入属性里拿',
+    src.includes('face.sessionId || face.session || (face.session && face.session.id)'))
   ok('inject 里声明了 sessions（不声明就拿不到服务）',
     /var inject = \[[^\]]*'sessions'/.test(src))
   // 注入面在 props.props 里（Workbench 收到的是 { props, store } 包装层）
@@ -838,6 +859,15 @@ try {
     ['最近打开过的文件优先（用户上次看的那个）',
       pick([{ rel: 'a.tex', size: 10 }, { rel: 'b.tex', size: 99 }],
         { root: 'E:/p', recents: [{ kind: 'file', root: 'E:/p', value: 'a.tex' }] }) === 'a.tex'],
+    // ↓ 关键回归：目录里躺着 main.tex 也不能抢走用户上次在看的那个
+    //   （踩过的坑：模板导入散出的 main.tex 每次进项目都被自动打开，看着像"删了没删掉"）
+    ['最近打开过的文件优先于 main.tex（不唯 main 马首是瞻）',
+      pick([{ rel: 'main.tex', size: 999 }, { rel: 'Safety_MARL框架.tex', size: 10 }],
+        { root: 'E:/p', recents: [{ kind: 'file', root: 'E:/p', value: 'Safety_MARL框架.tex' }] }) === 'Safety_MARL框架.tex'],
+    ['没有最近记录时 main.tex 仍然优先', pick([{ rel: 'main.tex' }, { rel: 'other.tex', size: 999 }]) === 'main.tex'],
+    ['最近记录指向的文件已被删 → 退回 main.tex',
+      pick([{ rel: 'main.tex' }, { rel: 'gone.tex' }],
+        { root: 'E:/p', recents: [{ kind: 'file', root: 'E:/p', value: 'deleted.tex' }] }) === 'main.tex'],
     ['最近记录属于别的项目时不认',
       pick([{ rel: 'a.tex', size: 10 }, { rel: 'b.tex', size: 99 }],
         { root: 'E:/p', recents: [{ kind: 'file', root: 'E:/other', value: 'a.tex' }] }) === 'b.tex'],
@@ -856,7 +886,7 @@ try {
   const offCount = (src.match(/autoOpen: false/g) || []).length
   ok('enterRoot 接线（loadTree 后挑主 tex + autoOpen 开关）',
     enter.includes('pickMainTex(state.files, { root: root, recents: state.recents })') && enter.includes('autoOpen === false'))
-  ok('打开具体文件/新建文档不被抢（2 处 autoOpen:false）', offCount === 2)
+  ok('打开具体文件/新建文档/模板落地不被抢（3 处 autoOpen:false）', offCount === 3)
 } catch (error) {
   bad('自动打开主 tex 测试抛错', String(error.message))
 }
@@ -929,10 +959,15 @@ try {
     error: '旧错误'
   })
   /** enterRoot 会去拉宿主（离线自测里必然失败）：吞掉拒绝，只看同步做的那部分。 */
+  const pendingEnters = []
   const tryEnter = (root) => {
     try {
       const pending = enterRoot(root)
-      if (pending && typeof pending.catch === 'function') pending.catch(() => {})
+      if (pending && typeof pending.then === 'function') {
+        // 收下 promise：enterRoot 期间会挂起外部同步闸门（enteringRoot），
+        // 不等它落定就进下一节，同步会被闸门挡掉、整节假红。
+        pendingEnters.push(pending.then(() => {}, () => {}))
+      }
     } catch (error) { /* 离线环境没有数据通道，忽略 */ }
   }
 
@@ -956,6 +991,7 @@ try {
     store.tabs.length === 2 && store.pdfRel === 'main.pdf' && store.log && store.root === 'e:/proj/b')
 
   // 收摊：把 store 还原，别影响后面的断言
+  await Promise.all(pendingEnters)   // 等 enterRoot 的闸门放下，否则下一节同步全被挡
   Object.assign(store, {
     root: '', tabs: [], activeId: null, tree: null, files: [], total: 0,
     pdfUrl: '', pdfRel: '', pdfRoot: '', pdfRev: '', pdfFor: '',
@@ -1186,10 +1222,16 @@ try {
   const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
 
   ok('setDoc 前后接了 capture/restore（整篇替换不再把页面甩走）',
-    /var keep = captureViewport\(view\)/.test(src)
-    && /kernel\.setDoc\(view, tab\.text\)\s*\n\s*restoreViewport\(view, keep\)/.test(src))
+    /var keep = Date\.now\(\) < suppressRestoreUntil \? null : captureViewport\(view\)/.test(src)
+    && /kernel\.setDoc\(view, tab\.text\)\s*\n\s*if \(keep\) \{\s*\n\s*restoreViewport\(view, keep\)/.test(src))
   ok('下一帧再补一次还原（等布局稳定）', /requestAnimationFrame\(function \(\) \{ restoreViewport\(/.test(src))
-  ok('行号换算不再以 posAtDOM 为主路', !src.includes('view.posAtDOM') && src.includes('lineReaderFor(view)'))
+  // 注释里提到 posAtDOM 是允许的（说明"为什么不用它"），要排除注释再断言；
+  // 文件末尾还内联着 CodeMirror 内核（它自己就用 posAtDOM），所以先切掉内核那一段
+  const kernelAt = src.indexOf('/* ===== 编辑器内核')
+  const panelOnly = kernelAt > 0 ? src.slice(0, kernelAt) : src
+  const codeOnly = panelOnly.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  ok('行号换算不再以 posAtDOM 为主路',
+    !codeOnly.includes('posAtDOM') && codeOnly.includes('posAtCoords') && src.includes('lineReaderFor(view)'))
 
   // 假 view：100 行、每行 10 个字符位置，视口首行 = 第 6 行
   const doc = {
@@ -1291,7 +1333,8 @@ try {
   ok('进项目期间暂停轮询（enteringRoot 闸门）',
     src.includes('enteringRoot = true') && src.includes('if (enteringRoot) return Promise.resolve(false)'))
   ok('自动打开失败会补一次、没主 tex 时给出说明',
-    src.includes('if (!findTab(root, rel)) return openTab(root, rel)') && src.includes('未自动打开'))
+    src.includes('if (!findTab(root, rel)) return openTab(root, rel)')
+    && src.includes('这个项目里没有 .tex，需要自己从「树」里选文件'))
 
   // 4) 发送选中内容：右键那一刻就把选区抓下来，菜单期间丢了还有备份
   ok('右键抓下选区（菜单后丢失也能发）',
@@ -1487,7 +1530,8 @@ try {
     ['显示「存放位置」与「选择文件夹…」', targetHtml.includes('存放位置') && targetHtml.includes('选择文件夹…')],
     ['还没选目录时提示「还没有选择文件夹」', targetHtml.includes('还没有选择文件夹')],
     ['创建按钮存在但未选目录时禁用', targetHtml.includes('>创建<') && /class="ml-modal-btn ml-modal-btn-on" disabled/.test(targetHtml)],
-    ['提示 main.tex 命名与不覆盖规则', targetHtml.includes('main.tex') && targetHtml.includes('不覆盖已有项目')],
+    ['提示 main.tex 命名与「非空目录落子文件夹」规则',
+      targetHtml.includes('main.tex') && targetHtml.includes('子文件夹') && targetHtml.includes('绝不把模板文件散进')],
     ['有「返回」回到列表', targetHtml.includes('>返回<')]
   ]
   for (const [label, passed] of targetChecks) passed ? ok(label) : bad(label)
@@ -1779,7 +1823,23 @@ try {
     ['内核产物含 onComplete（重建后确实带上了补全）', kernelSrc.includes('onComplete')],
     ['编辑器把补全源接进 create（onComplete → completeLatex）',
       src.includes('onComplete: function (context)') && src.includes('return completeLatex({ text: context.state.doc.toString(), pos: context.pos })')],
-    ['KERNEL_VERSION 加一（打掉浏览器旧缓存）', src.includes("var KERNEL_VERSION = '2'")],
+    ['KERNEL_VERSION 加一（打掉浏览器旧缓存）', src.includes("var KERNEL_VERSION = '5'")],
+    // 踩过的坑：highlightDocument 返回 {segments,bold} 包装对象，直接递给内核时
+    // 内核按「每行一个 segment 数组」迭代 → lines[i].length 是 undefined → 整行跳过
+    // → 一条行内样式都没涂，线上只剩 stex 兜底色，\begin{} 环境名/键全是白字。
+    ['getSegments 把包装对象摊成 segment 数组（行内上色不能整行被跳过）',
+      /getSegments: function \(text\) \{[\s\S]{0,700}?var doc = highlightDocument\(text\)[\s\S]{0,300}?rows\.push\(doc\[i\]\.segments\)/.test(src)],
+    ['内核按 segment 数组迭代（lines[i] 必须直接可 for-of）',
+      entrySrc.includes('const segments = lines[number - 1]') && !/const segments = lines\[number - 1\][\s\S]{0,80}\.segments/.test(entrySrc)],
+    // 用户要求「直接从墨灵tex.exe 搬运套用，别自己瞎编辑」：内核词法换成桌面版
+    // Editor.vue 那套自写 StreamLanguage（不再用 legacy-modes 的 stex —— stex 把
+    // 环境名和 \label 的键都吐成 atom，跟面板分词对不上）。
+    ['内核改用桌面版的 StreamLanguage 词法（不再 import stex）',
+      entrySrc.includes('StreamLanguage.define({') && !/from\s+'@codemirror\/legacy-modes/.test(entrySrc)],
+    ['内核词法把 \\begin{...} 整体当 keyword（环境名跟着命令一起紫）',
+      entrySrc.includes('^\\\\begin\\{[^}]*\\}')],
+    ['内核产物里带上了新词法（propertyName/escape 都在）',
+      kernelSrc.includes('propertyName') && kernelSrc.includes('escape')],
     ['补全抛错时兜底返回 null（不让补全把编辑器搞崩）',
       /onComplete: function \(context\) \{\s*try \{/.test(src)],
     ['补全弹窗配色复用主题 token（不额外写死颜色）',
@@ -1796,6 +1856,247 @@ try {
   for (const [label, passed] of wiring) passed ? ok(label) : bad(label)
 } catch (error) {
   bad('自动补全测试抛错', String(error.message))
+}
+
+console.log('29) SyncTeX 不依赖会话工作区（按当前 tex 选同名 PDF + 反向定位按 file 切标签）')
+try {
+  const pdfFor = bundle.__pdfRelForTab
+  const relOf = bundle.__relFromSynctexFile
+  const files = [
+    { rel: 'main.tex' }, { rel: 'main.pdf' },
+    { rel: 'Safety_MARL框架.tex' }, { rel: 'Safety_MARL框架.pdf' },
+    { rel: '问题场景定义.tex' }
+  ]
+  const checks = [
+    // 核心回归：一个项目里多个 tex 时，绝不能再盲用「上一次预览的 PDF」
+    ['当前 tex 选自己的同名 PDF（不是上一次预览的 main.pdf）',
+      pdfFor({ rel: 'Safety_MARL框架.tex' }, files, 'main.pdf') === 'Safety_MARL框架.pdf'],
+    ['清单里没有同名 PDF 时，兜底值同名才用',
+      pdfFor({ rel: '问题场景定义.tex' }, files, 'main.pdf') === ''],
+    ['清单里没有但兜底值同名 → 用兜底（刚编译完树还没刷）',
+      pdfFor({ rel: 'a.tex' }, [], 'a.pdf') === 'a.pdf'],
+    ['反斜杠路径也认', pdfFor({ rel: 'sub\\x.tex' }, [{ rel: 'sub/x.pdf' }], '') === 'sub/x.pdf'],
+    ['没有 tab 时返回空串（调用方给提示，不发注定失败的请求）', pdfFor(null, files, 'main.pdf') === ''],
+    ['不是 tex 的标签不配 PDF', pdfFor({ rel: 'a.pdf' }, files, 'main.pdf') === ''],
+    // 反向定位：SyncTeX 回的 file 可能是另一个 tex（\input 章节），要能换成项目内相对路径
+    ['SyncTeX 返回的绝对路径 → 项目内相对路径',
+      relOf('E:/p', 'E:/p/Safety_MARL框架.tex', files) === 'Safety_MARL框架.tex'],
+    ['容忍 ./ 这类冗余段',
+      relOf('E:/p', 'E:/p/./main.tex', files) === 'main.tex'],
+    ['大小写/斜杠不同也认',
+      relOf('E:\\p', 'e:/p/main.tex', files) === 'main.tex'],
+    ['不在当前项目里的文件 → 空串（只提示不乱跳）',
+      relOf('E:/p', 'E:/other/x.tex', files) === '']
+  ]
+  for (const [label, passed] of checks) passed ? ok(label) : bad(label)
+
+  // 接线：两个同步入口都必须走 pdfRelForTab，且反向定位真的用了 data.file
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const fwd = src.slice(src.indexOf('var forwardSync = function'), src.indexOf('var backwardSync = function'))
+  const bwd = src.slice(src.indexOf('var backwardSync = function'), src.indexOf('// 提纲浮层开着时'))
+  const wiring = [
+    ['正向定位按 tab 选 PDF（不再盲传 store.pdfRel）',
+      fwd.includes('pdfRelForTab(target, state.files, state.pdfRel)') && !/pdf:\s*store\.pdfRel/.test(fwd)],
+    ['反向定位按 tab 选 PDF', bwd.includes('pdfRelForTab(target, state.files, state.pdfRel)') && !/pdf:\s*store\.pdfRel/.test(bwd)],
+    ['反向定位按 data.file 判断落到了哪个文件', bwd.includes('relFromSynctexFile(target.root, data.file, state.files)')],
+    ['落到别的 tex 时先 openTab 再跳（否则跳错位置还显示成功）',
+      bwd.includes('openTab(target.root, landed)')],
+    ['找不到同名 PDF 时给出明确提示，不静默失败',
+      fwd.includes('还没编译出同名 PDF') && bwd.includes('还没编译出同名 PDF')]
+  ]
+  for (const [label, passed] of wiring) passed ? ok(label) : bad(label)
+} catch (error) {
+  bad('SyncTeX PDF 配对测试抛错', String(error.message))
+}
+
+console.log('30) 文件树抽屉自适应尺寸（高度看行数、宽度看最长文件名）')
+try {
+  const autoSize = bundle.__treeAutoSize
+  const textWidth = bundle.__treeTextWidth
+
+  // 目录树：2 个目录 + 3 个文件；deep/ 里还有一层
+  const tree = {
+    name: 'proj', rel: '', type: 'dir', children: [
+      { name: 'figures', rel: 'figures', type: 'dir', children: [
+        { name: 'cat.pdf', rel: 'figures/cat.pdf', type: 'file' }
+      ] },
+      { name: 'deep', rel: 'deep', type: 'dir', children: [
+        { name: 'inner', rel: 'deep/inner', type: 'dir', children: [
+          { name: 'x.tex', rel: 'deep/inner/x.tex', type: 'file' }
+        ] }
+      ] },
+      { name: 'main.tex', rel: 'main.tex', type: 'file' },
+      { name: '短.tex', rel: '短.tex', type: 'file' }
+    ]
+  }
+  const files = [
+    { rel: 'figures/cat.pdf' }, { rel: 'deep/inner/x.tex' },
+    { rel: 'main.tex' }, { rel: '短.tex' }
+  ]
+
+  // 1) 行数 = 可见节点数（根不算）：figures + cat.pdf + deep + inner + x.tex + main.tex + 短.tex = 7
+  const all = autoSize({ tree: tree, expanded: {}, files: files, filter: '' })
+  all.rows === 7 ? ok('高度按可见行数算（展开全部 7 行）', String(all.rows)) : bad('行数算错', JSON.stringify(all))
+  all.height === 27 + 10 + 7 * 21
+    ? ok('高度 = 表头 + 内边距 + 行数 × 行高（不撑满编辑区）', String(all.height))
+    : bad('高度算错', JSON.stringify(all))
+
+  // 2) 折叠 deep 之后少 2 行（inner / x.tex；deep 自己还在）
+  const folded = autoSize({ tree: tree, expanded: { deep: false }, files: files, filter: '' })
+  folded.rows === 5 && folded.height === 27 + 10 + 5 * 21
+    ? ok('折叠目录后高度跟着缩（不是固定高度）', String(folded.rows))
+    : bad('折叠后行数/高度不对', JSON.stringify(folded))
+
+  // 3) 宽度看最长文件名：全角按 11.5、半角按 6.6，夹在 168…560
+  const longName = autoSize({
+    tree: { name: 'p', rel: '', type: 'dir', children: [{ name: '2026_DRO_RL_ML_研究综述笔记.md', rel: 'a.md', type: 'file' }] },
+    expanded: {}, files: [], filter: ''
+  })
+  const expectLong = 16 + 15 + textWidth('2026_DRO_RL_ML_研究综述笔记.md')
+  longName.width === Math.ceil(Math.min(Math.max(168, expectLong), 560))
+    ? ok('宽度 = 最长文件名（中文按全角算）+ 图标与内边距', String(longName.width))
+    : bad('宽度没按最长文件名算', JSON.stringify({ got: longName.width, want: expectLong }))
+  longName.width > 168 ? ok('长文件名时比最小宽度宽（不被截断）', String(longName.width)) : bad('长名没撑开', String(longName.width))
+
+  // 4) 短文件名时收到最小宽度，不会窄成一条缝
+  const tiny = autoSize({ tree: { name: 'p', rel: '', type: 'dir', children: [{ name: 'a', rel: 'a', type: 'file' }] }, expanded: {}, files: [], filter: '' })
+  tiny.width === 168 ? ok('文件名都很短时保持最小宽度（表头不挤）', String(tiny.width)) : bad('最小宽度没兜住', String(tiny.width))
+
+  // 5) 超长文件名夹到上限（不让抽屉吃掉整个编辑区）
+  const huge = autoSize({
+    tree: { name: 'p', rel: '', type: 'dir', children: [{ name: 'x'.repeat(300), rel: 'x', type: 'file' }] },
+    expanded: {}, files: [], filter: ''
+  })
+  huge.width === 560 ? ok('超长文件名夹到上限 560（不占满编辑区）', String(huge.width)) : bad('上限没夹住', String(huge.width))
+
+  // 6) 过滤时按平铺结果算行数与宽度
+  const filtered = autoSize({ tree: tree, expanded: {}, files: files, filter: 'main' })
+  filtered.rows === 1 ? ok('过滤后只按命中的行算高度', String(filtered.rows)) : bad('过滤后行数不对', JSON.stringify(filtered))
+  const filteredWide = autoSize({ tree: tree, expanded: {}, files: files, filter: '.tex' })
+  filteredWide.rows === 3 ? ok('过滤命中的行数正确（.tex 3 个）', String(filteredWide.rows)) : bad('过滤命中数不对', JSON.stringify(filteredWide))
+
+  // 7) 空树：只剩表头，不报错
+  const empty = autoSize({ tree: { name: 'p', rel: '', type: 'dir', children: [] }, expanded: {}, files: [], filter: '' })
+  empty.rows === 0 && empty.height === 37 && empty.width === 168
+    ? ok('空目录只留表头高度（不撑出空白区）', JSON.stringify(empty))
+    : bad('空目录尺寸不对', JSON.stringify(empty))
+
+  // 8) 接线：抽屉用 px 宽高、拖动记像素、双击回自适应、旧的比例字段彻底不用了
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const boxAt = src.indexOf('var treeBox = treeAutoSize')
+  const drawerSrc = boxAt >= 0 ? src.slice(boxAt, boxAt + 600) : ''
+  const wiring = [
+    ['抽屉宽度用自适应结果（不是百分比）',
+      src.includes("width: (store.treeW > 0 ? store.treeW : treeBox.width) + 'px'") && !src.includes("(store.treeWidth * 100).toFixed(1) + '%'")],
+    ['抽屉高度用自适应结果（不再 top/bottom 撑满）',
+      src.includes('height: treeBox.height +') && !/drawer:\s*\{[^}]*bottom: 8/s.test(src)],
+    ['文件多到装不下时才内部滚动（maxHeight 兜住）',
+      src.includes("maxHeight: 'calc(100% - 16px)'")],
+    ['空目录/读取中时留出最小高度（不缩成一条缝）',
+      src.includes('minHeight: (TREE_HEAD_H + TREE_LIST_PAD + TREE_ROW_H * 2)')],
+    ['拖动右边框记像素宽（不再记比例）',
+      src.includes('patch({ treeW: Math.round(clamp(') && !src.includes('patch({ treeWidth:')],
+    ['双击右边框恢复自适应', src.includes('onDoubleClick: function () { patch({ treeW: 0 }); persist() }')],
+    ['旧的比例字段 treeWidth 已彻底移除', !src.includes('treeWidth')],
+    ['高度按左栏实际可用高度夹一次（窗口矮时不溢出）', drawerSrc.includes('leftRoom')]
+  ]
+  for (const [label, passed] of wiring) passed ? ok(label) : bad(label)
+} catch (error) {
+  bad('文件树自适应测试抛错', String(error.message))
+}
+
+console.log('31) 会话隔离（A 会话进项目 A，切到 B 会话不受影响，切回 A 原样恢复）')
+try {
+  const store = bundle.__store
+  const switchTo = bundle.__switchSession
+
+  // 先落到一个干净会话，别让前面几十节留下的现场干扰
+  switchTo('__iso_a')
+  bundle.__closeProjectFiles()
+
+  // 演「A 会话从墨灵进了项目 A」
+  store.view = 'workbench'
+  store.root = 'E:\\proj-a'
+  store.files = [{ rel: 'main.tex' }]
+  store.tree = { name: 'proj-a', rel: '', type: 'dir', children: [] }
+  store.tabs = [{ id: 901, root: 'E:\\proj-a', rel: 'main.tex', text: 'A 的内容', dirty: false }]
+  store.activeId = 901
+  store.pdfRel = 'main.pdf'
+  store.pdfRev = '11'
+  store.engine = 'xelatex'
+
+  // 切到 B：B 从没进过项目 → 必须回启动页，绝不把 A 的项目带过来
+  const changed = switchTo('__iso_b')
+  changed === true ? ok('切到另一个会话会真的切换（返回 true）', String(changed)) : bad('切会话没生效', String(changed))
+  store.view === 'welcome' ? ok('B 会话落到启动页（不继承 A 的项目）', store.view) : bad('B 会话继承了 A 的视图', store.view)
+  store.root === '' ? ok('B 会话的工作区是空的', JSON.stringify(store.root)) : bad('B 会话拿到 A 的 root', store.root)
+  store.tabs.length === 0 ? ok('B 会话没有 A 的标签页', String(store.tabs.length)) : bad('B 会话看到 A 的标签', String(store.tabs.length))
+  store.pdfRel === '' ? ok('B 会话没有 A 的 PDF 预览', JSON.stringify(store.pdfRel)) : bad('B 会话拿到 A 的 PDF', store.pdfRel)
+  bundle.__treeSignature() === '' ? ok('B 会话的文件清单签名也清空（不会误判外部改动）', '') : bad('签名串了会话', bundle.__treeSignature())
+
+  // 设置类字段不参与隔离：编译引擎是这台机器的偏好，不该跟着项目走
+  store.engine === 'xelatex' ? ok('设置类字段（引擎）不参与隔离，切会话保留', store.engine) : bad('引擎被会话切没了', store.engine)
+
+  // B 自己进项目 B
+  store.view = 'workbench'
+  store.root = 'E:\\proj-b'
+  store.tabs = [{ id: 902, root: 'E:\\proj-b', rel: 'paper.tex', text: 'B 的内容', dirty: false }]
+  store.activeId = 902
+
+  // 切回 A：原样恢复
+  switchTo('__iso_a')
+  store.root === 'E:\\proj-a' ? ok('切回 A，工作区还是项目 A', store.root) : bad('A 的 root 丢了', store.root)
+  store.tabs.length === 1 && store.tabs[0].id === 901 && store.tabs[0].text === 'A 的内容'
+    ? ok('切回 A，标签页与内容原样恢复', store.tabs[0].rel)
+    : bad('A 的标签页没恢复', JSON.stringify(store.tabs))
+  store.activeId === 901 ? ok('切回 A，当前标签也恢复', String(store.activeId)) : bad('A 的活动标签丢了', String(store.activeId))
+  store.pdfRel === 'main.pdf' && store.pdfRev === '11'
+    ? ok('切回 A，PDF 预览状态恢复', store.pdfRel + ' rev=' + store.pdfRev)
+    : bad('A 的 PDF 状态没恢复', JSON.stringify({ rel: store.pdfRel, rev: store.pdfRev }))
+
+  // 反过来：再切 B，B 也还是 B（两边各自独立）
+  switchTo('__iso_b')
+  store.root === 'E:\\proj-b' && store.tabs.length === 1 && store.tabs[0].id === 902
+    ? ok('切到 B，B 仍是项目 B（A 没顶掉它）', store.root)
+    : bad('B 的状态被 A 污染', JSON.stringify({ root: store.root, tabs: store.tabs.map((t) => t.id) }))
+
+  // 同一个会话重复切 = 空操作（不会白清一遍状态）
+  switchTo('__iso_b') === false ? ok('同一个会话重复切换是空操作', 'false') : bad('重复切同一会话还动了状态')
+
+  // 忙闲字段不跟着项目走：上一个会话没跑完的编译/取图不能把新会话永久卡在「忙」
+  store.busy = 'compile'
+  store.syncBusy = 'tree'
+  store.outlineBusy = 'outline'
+  store.dragging = true
+  switchTo('__iso_a')
+  store.busy === '' && store.syncBusy === '' && store.outlineBusy === '' && store.dragging === false
+    ? ok('切会话清掉忙闲字段（不会永久卡在「忙」）', 'busy/syncBusy/outlineBusy/dragging 全清')
+    : bad('忙闲字段跟着会话跑了', JSON.stringify({ busy: store.busy, syncBusy: store.syncBusy, outlineBusy: store.outlineBusy, dragging: store.dragging }))
+
+  // 接线：Body 只让「屏幕上的那份」动全局 store
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const wiring = [
+    ['Body 从注入属性里读会话 id', src.includes("face.sessionId || face.session || (face.session && face.session.id)")],
+    ['只有可见的 tab 才切会话（隐藏的 Body 不许抢）', src.includes('if (!visible) return')],
+    ['再用 sidebarRight.mounted 兜一层（浮动面板下 visible 可能同时为真）',
+      src.includes("state.ctx.get('sidebarRight')") && src.includes('mounted !== sessionId')],
+    ['mounted 服务没就绪会重试，不是只试一次', src.includes('tries++ < 20')],
+    ['切会话后作废上一个会话的待触发定时器', /pendingFlash = null\s*\n\s*return true/.test(src)],
+    ['进项目闸门在切会话时复位（否则轮询永久暂停）', src.includes('enteringRoot = false   // 卡在「进项目」中间被切走')],
+    ['设置类字段不在隔离清单里（编译方式/引擎/分栏宽等）',
+      !bundle.__SESSION_FIELDS.includes('engine') && !bundle.__SESSION_FIELDS.includes('treeW') && !bundle.__SESSION_FIELDS.includes('mode')],
+    ['项目字段在隔离清单里（view/root/tabs/pdfRel）',
+      ['view', 'root', 'tabs', 'pdfRel', 'files', 'tree'].every((key) => bundle.__SESSION_FIELDS.includes(key))],
+    // 异步回包的护栏：切了会话/切了项目之后，旧请求的结果不许往新会话里灌
+    ['loadTree 回包前核对项目没变', /normalizePath\(target\) !== normalizePath\(state\.root\)[\s\S]{0,80}return undefined/.test(src)],
+    ['openTab 读盘回包前核对标签还在（切会话就丢弃）', /read-file[\s\S]{0,120}if \(!findTabById\(id\)\) return undefined/.test(src)],
+    ['saveTab 写盘回包前核对标签还在', /write-file[\s\S]{0,200}if \(!findTabById\(id\)\) return undefined/.test(src)],
+    ['切会话不再回收另一个会话的 PDF blob（否则切回去是破图）',
+      !src.slice(src.indexOf('function switchSession'), src.indexOf('function activeTab')).includes('revokeObjectURL')]
+  ]
+  for (const [label, passed] of wiring) passed ? ok(label) : bad(label)
+} catch (error) {
+  bad('会话隔离测试抛错', String(error.message))
 }
 
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)

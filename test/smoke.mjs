@@ -140,8 +140,36 @@ try {
   bad('失败路径抛错', String(error.message))
 }
 
+console.log('7) 工具相对路径不依赖会话 cwd（墨灵打开的项目优先）')
+try {
+  // 用户切到别的对话框项目时，墨灵面板仍开着 fixtures 这个项目：
+  // `latex_outline({file:'hello-en.tex'})` 必须还能找到，而不是按会话 cwd 报文件不存在。
+  const other = new Map()
+  const otherCtx = {
+    tools: { register(definition) { other.set(definition.name, definition); return () => other.delete(definition.name) } },
+    get: () => undefined,
+    on: () => () => {},
+    inject: () => {}
+  }
+  apply(otherCtx, { allowedRoots: [fixtures] })
+  const scratchCwd = mkdtempSync(join(tmpdir(), 'latex-tools-cwd-'))
+  const exec = {
+    signal: new AbortController().signal,
+    arguments: { file: 'hello-en.tex' },
+    name: 'latex_outline',
+    agent: { session: { header: { cwd: scratchCwd } } }
+  }
+  const value = await other.get('latex_outline').execute({ file: 'hello-en.tex' }, exec)
+  value.sections.length >= 4
+    ? ok('会话 cwd 之外也能解析相对路径', `${value.sections.length} 条章节 / cwd=${scratchCwd}`)
+    : bad('相对路径仍绑在会话 cwd 上', JSON.stringify(value).slice(0, 120))
+  rmSync(scratchCwd, { recursive: true, force: true })
+} catch (error) {
+  bad('相对路径兜底抛错', String(error.message))
+}
+
 if (fullMode) {
-  console.log('7) latex_compile（full）')
+  console.log('8) latex_compile（full）')
   try {
     const { value, rendered } = await call('latex_compile', { file: join(fixtures, 'hello-en.tex'), mode: 'full' })
     console.log(rendered.split('\n').slice(0, 10).map((line) => `     ${line}`).join('\n'))
@@ -150,7 +178,7 @@ if (fullMode) {
     bad('full 编译抛错', String(error.message))
   }
 
-  console.log('8) latex_compile（中文 / xelatex）')
+  console.log('9) latex_compile（中文 / xelatex）')
   try {
     const { value, rendered } = await call('latex_compile', { file: join(fixtures, 'hello-zh.tex'), mode: 'full' })
     console.log(rendered.split('\n').slice(0, 10).map((line) => `     ${line}`).join('\n'))
@@ -160,7 +188,7 @@ if (fullMode) {
     bad('中文编译抛错', String(error.message))
   }
 
-  console.log('9) latex_synctex（forward）')
+  console.log('10) latex_synctex（forward）')
   try {
     const { value, rendered } = await call('latex_synctex', {
       direction: 'forward',
@@ -174,7 +202,7 @@ if (fullMode) {
     bad('latex_synctex 抛错', String(error.message))
   }
 
-  console.log('10) latex_clean')
+  console.log('11) latex_clean')
   try {
     const { value, rendered } = await call('latex_clean', { file: join(fixtures, 'hello-en.tex') })
     console.log(`     ${rendered.split('\n')[0]}`)
