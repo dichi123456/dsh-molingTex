@@ -179,7 +179,8 @@ try {
     ['已去掉 DSH 工作区列表', !html.includes('DSH 工作区')],
     ['「模板」入口卡（浏览模板库）', html.includes('浏览模板库') && html.includes('中文论文 · 英文论文 · 简历 · 幻灯片 · 实验报告等内置模板')],
     ['启动页不再罗列模板（模板清单只在二级弹窗里）', !html.includes('ml-tpl-card') && !html.includes('ml-tpl-search') && !html.includes('ml-tpl-grid')],
-    ['空白 ctexart 骨架入口仍在启动页', html.includes('新建中文文档') && html.includes('ctexart')],
+    ['启动页已去掉「新建中文文档」卡片（用户 2026-11-14 要求）',
+      !html.includes('新建中文文档') && !html.includes('ctexart 骨架')],
     ['行样式已就位（ml-row 多条）', rowCount >= 5]
   ]
   for (const [label, passed] of checks) passed ? ok(label) : bad(label)
@@ -1466,7 +1467,7 @@ try {
     ['启动页有「浏览模板库」入口', welcomeHtml.includes('浏览模板库') && welcomeHtml.includes('中文论文 · 英文论文 · 简历 · 幻灯片 · 实验报告等内置模板')],
     ['启动页不罗列模板（无搜索框 / 无卡片网格）',
       !welcomeHtml.includes('ml-tpl-search') && !welcomeHtml.includes('ml-tpl-card') && !welcomeHtml.includes('ml-tpl-grid') && !welcomeHtml.includes('ml-modal')],
-    ['启动页仍有空白 ctexart 骨架入口', welcomeHtml.includes('新建中文文档') && welcomeHtml.includes('ctexart')]
+    ['启动页不再有空白 ctexart 骨架卡片（只在模板弹窗里）', !welcomeHtml.includes('新建中文文档') && !welcomeHtml.includes('ctexart 骨架')]
   ]
   for (const [label, passed] of welcomeChecks) passed ? ok(label) : bad(label)
 
