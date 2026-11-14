@@ -17,7 +17,7 @@ github:dichi123456/dsh-molingTex
 ### 指定版本（Release 安装包）
 
 ```
-plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.8.1/dsh-plugin-moling-latex-0.8.1.tgz
+plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.8.2/dsh-plugin-moling-latex-0.8.2.tgz
 ```
 
 ### 本地目录
@@ -33,7 +33,7 @@ plugin_manager install_bundle  <本仓库本地路径>
 
 ## 能做什么
 
-**启动页**：进来先看「最近」—— 工作区与文件分两组、各最多 5 条，点一个才进工作台；不自动打开任何项目。
+**启动页**：标题区左侧带**墨灵 logo**（内联 SVG，跟桌面版同款：深蓝圆角方块 + 蓝紫渐变描边 + 白色 M 折线），右边是大标题与副标题；下面先看「最近」—— 工作区与文件分两组、各最多 5 条，点一个才进工作台；不自动打开任何项目。
 
 **模板库**：启动页「模板」区只放一个入口（`浏览模板库`，旁边还有 `新建中文文档` 的 ctexart 骨架），点开是**二级弹窗** —— 左边分类导航（全部模板 / 中文论文 / 英文论文 / 简历 / 幻灯片 / 报告），右边搜索框（名称/描述/引擎都参与匹配）+ 卡片网格，共 21 个内置模板（中文/英文论文、IEEE、Elsevier、Wiley、国赛论文、简历、Beamer 幻灯片、实验报告）。
 

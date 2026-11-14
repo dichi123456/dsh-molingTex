@@ -1,6 +1,6 @@
 ﻿{
   "name": "dsh-plugin-moling-latex",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "private": true,
   "description": "moling_latex —— 墨灵TeX 的 DSH 插件：右侧栏 LaTeX 工作台（目录树 / 编辑 / 自动补全 / 编译 / 日志 / PDF / 21 个内置模板）+ 5 个 Agent 工具",
   "type": "module",

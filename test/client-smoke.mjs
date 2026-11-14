@@ -118,6 +118,9 @@ try {
   const html = ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
   const checks = [
     ['大标题', html.includes('ml-h1') && html.includes('墨灵 LaTeX')],
+    ['标题区带墨灵 logo（内联 SVG）',
+      html.includes('ml-brand') && html.includes('ml-brand-mark') &&
+      html.includes('viewBox="0 0 512 512"') && html.includes('ml-brand-grad')],
     ['副标题', html.includes('本地一体化')],
     ['启动：新建文档', html.includes('新建文档')],
     ['启动：打开文件夹', html.includes('打开文件夹')],
