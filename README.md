@@ -17,7 +17,7 @@ github:dichi123456/dsh-molingTex
 ### 指定版本（Release 安装包）
 
 ```
-plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.8.5/dsh-plugin-moling-latex-0.8.5.tgz
+plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.8.6/dsh-plugin-moling-latex-0.8.6.tgz
 ```
 
 ### 本地目录
@@ -63,7 +63,7 @@ plugin_manager install_bundle  <本仓库本地路径>
 - `文件树`：浮层文件树（**连编译辅助文件 `.aux/.toc/.out/.bbl/.log` 等也列出来**，可直接点开看），右边框可拖，**宽度随内容自适应**；进项目时抽屉不自动展开，要看再点；`文件大纲`：章节列表点一条跳一行；
 - 底部状态栏：编译结果居中显示（成功绿 / 失败红），最右切换 `日志` / `PDF`。
 
-**PDF 预览**：逐页图片，轻量不卡；清晰度 72 / 96 / 144 三档，`Ctrl+滚轮` 以鼠标为锚点缩放（0.5×–3×），`适应` 一键整页贴合当前窗口；**单击页面跳回源码行**。
+**PDF 预览**：逐页图片，轻量不卡；清晰度 72 / 96 / 144 三档，`Ctrl+滚轮` 以鼠标为锚点缩放（0.5×–3×），`适应` 一键整页贴合当前窗口；**页面直接紧贴分割线、不留黑边**（无内边距、无底色、无投影），页与页之间只留 8px；**单击页面跳回源码行**。面板内滚动条统一收成 8px 细圆角条，tex / pdf 交界处不再是一条粗灰边。
 
 **SyncTeX 双向定位**：编辑器右键「定位到 PDF 位置」→ 源码行跳到 PDF 对应页并画黄圈；PDF 上单击 → 跳回源码行（**文件树/提纲等浮层会自动收起，目标行闪一下绿**，不会"跳了却看不出来"）；结果显示在底部状态栏，失败也一定会说明原因。
 
@@ -92,7 +92,7 @@ plugin_manager install_bundle  <本仓库本地路径>
 | 面板状态灯是红的 | 数据通道异常：确认 `GET /moling/api/ping` 能返回 `{"ok":true,...}`，否则是宿主半侧没装载 |
 | 打开文件夹后列表是空的 | 列表区会写原因：`不在允许范围内` → 用启动页「打开文件夹…」重开一次；`另有 N 个其它文件` → 该目录确实没有支持的类型 |
 | 编译报「找不到引擎」 | 让 Agent 跑 `latex_status`，或在插件配置里指 `texlivePath` |
-| PDF 预览空白 | 先看底部状态条：写「降分辨率预览不可用」= 取图失败（已退回内置阅读器）；两样都空就点「新标签」用系统/浏览器打开 |
+| PDF 预览空白 | 先看底部状态条：写「降分辨率预览不可用」= 取图失败（已退回内置阅读器）；两样都空就用 `latex_compile` 重新编译一次 |
 | 改了代码后面板没变化 | 只改 `lib/client.js` 刷新页面即可；改 `lib/server.js` / `lib/index.js` 要**重开 DSH** |
 
 ## 许可证

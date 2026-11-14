@@ -271,7 +271,9 @@ try {
     '\\begin{align}',
     'a &= b \\\\',
     '\\end{align}',
-    '占比 100\\% 的样本，见 \\ref{sec:intro}'
+    '占比 100\\% 的样本，见 \\ref{sec:intro}',
+    '式中，形如 $\\%$ 的写法之后还有正文，不该变灰。',
+    '真注释 % 从这里开始'
   ].join('\n'))
 
   const find = (index, text) => (lines[index].segments.find((segment) => segment.text === text) || {})
@@ -280,6 +282,11 @@ try {
   const cmdSeg = find(1, '\\begin')
   const endEnv = find(3, 'align')
   const line3AllMath = lines[2].segments.length > 0 && lines[2].segments.every((segment) => segment.style && /#98c379/.test(segment.style.color))
+  // \% 之后不许变注释：数学里的 $\%$ 整段按数学绿，后面的正文保持无色
+  const mathPct = find(5, '$\\%$')
+  const pctIsComment = lines[5].segments.some((segment) => segment.style && segment.style.fontStyle === 'italic')
+  const afterPctText = lines[5].segments.map((segment) => segment.text).join('')
+  const realComment = lines[6].segments.some((segment) => segment.text.indexOf('从这里开始') >= 0 && segment.style && segment.style.fontStyle === 'italic')
 
   const checks = [
     ['\\cite 命令着色（桌面版紫 #c678dd）', Boolean(cmdSeg.style && /#c678dd/.test(cmdSeg.style.color))],
@@ -289,7 +296,11 @@ try {
     ['\\end 的环境名同样着色', Boolean(endEnv.style && /#c678dd/.test(endEnv.style.color))],
     ['\\% 转义不会把整行变注释', lines[4].segments.some((segment) => segment.style === null && segment.text.indexOf('的样本') >= 0)],
     ['\\ref 键着色', Boolean((find(4, 'sec:intro') || {}).style)],
-    ['行数一致', lines.length === 5]
+    // 用户 2026-11-14 报的 bug：$\%$ 之后整段变灰斜体（误当注释）
+    ['数学里的 $\\%$ 按数学着色，不是注释', Boolean(mathPct.style && /#98c379/.test(mathPct.style.color))],
+    ['$\\%$ 之后的正文不变灰', afterPctText.indexOf('不该变灰') >= 0 && !pctIsComment],
+    ['真注释仍然是灰斜体', realComment],
+    ['行数一致', lines.length === 7]
   ]
   for (const [label, passed] of checks) passed ? ok(label) : bad(label)
 } catch (error) {
@@ -536,6 +547,7 @@ try {
 
   const html = render()
   const percent = bundle.__syncPercent
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   // 展开编译方式下拉，验证三种模式在菜单里
   store.compileMenu = true
   const compileMenuHtml = render()
@@ -607,10 +619,20 @@ try {
     ['右键菜单默认不显示', !html.includes('定位到 PDF 位置')],
     ['缩放到 200% 时页面宽度翻倍', html.includes('width:200.00%')],
     ['页面容器不再被 maxWidth:100% 卡死（放大可超出窗口、可横向拖动）',
-      html.includes('position:relative;margin:0 auto 10px') && !html.includes('margin:0 auto 10px;max-width:100%')],
+      html.includes('position:relative;margin:0 auto 8px') && !html.includes('margin:0 auto 8px;max-width:100%')],
+    // 用户 2026-11-14 要求「pdf 预览区域的黑边去掉，pdf 直接紧贴分割处，不预留黑框」：
+    // 预览容器不能有内边距/底色，页面图不能有投影，圆角归零。
+    ['PDF 预览区不再预留黑边（无内边距、无底色）',
+      src.includes("pdfScroll: { flex: 1, overflow: 'auto', padding: 0, minHeight: 0, background: 'transparent'") &&
+      !src.includes("pdfScroll: { flex: 1, overflow: 'auto', padding: '8px 10px'")],
+    ['PDF 页面图不再有投影/圆角（深色底上就是一条黑边）',
+      src.includes("background: '#fff', borderRadius: 0, aspectRatio: '1 / 1.414'") &&
+      !/pdfPage: \{[\s\S]{0,260}?boxShadow/.test(src)],
     ['显示缩放百分比', html.includes('200%')],
     ['右栏有缩放按钮', html.includes('>－<') && html.includes('>＋<')],
     ['顶栏有「适应窗口」按钮', html.includes('>适应<') && html.includes('整页适应当前窗口')],
+    // 用户 2026-11-14 要求：PDF 区顶栏最右边的「新标签」链接去掉
+    ['PDF 顶栏不再有「新标签」链接', !html.includes('>新标签<') && !html.includes('把整份 PDF 在新标签打开')],
     ['定位环渲染在页面上', html.includes('border-radius:50%')],
     ['定位环按页面尺寸换算百分比', percent(100, 595.276) === '16.799%' && percent(200, 841.89) === '23.756%'],
     ['页面可点击定位（crosshair 光标）', html.includes('crosshair')],
@@ -1138,7 +1160,12 @@ try {
     ['纯删除 → 标删除处紧跟的一行', fmt(diff('a\nb\nc', 'a\nc')) === '[{"from":2,"to":2}]'],
     ['空文档 → 全算新增', fmt(diff('', 'x\ny')) === '[{"from":1,"to":2}]'],
     ['顺序变了（行集相同）→ 兜底给一整块', diff('a\nb', 'b\na').length > 0],
-    ['null/undefined 不炸', Array.isArray(diff(null, undefined)) && diff(null, null).length === 0]
+    ['null/undefined 不炸', Array.isArray(diff(null, undefined)) && diff(null, null).length === 0],
+    // 用户 2026-11-14 报的「一改就整篇刷绿」：磁盘是 CRLF、大模型回写成 LF（或反之），
+    // 逐行比会认为**每一行都变了**。归一化换行之后只认真正的改动行。
+    ['CRLF ↔ LF 只是换行不同 → 不标', fmt(diff('a\r\nb\r\nc', 'a\nb\nc')) === '[]'],
+    ['CRLF 旧 + LF 新、只改第 2 行 → 只标第 2 行', fmt(diff('a\r\nb\r\nc', 'a\nB\nc')) === '[{"from":2,"to":2}]'],
+    ['CRLF 旧 + LF 新、末尾追加 → 只标新增行', fmt(diff('a\r\nb', 'a\nb\nc')) === '[{"from":3,"to":3}]']
   ]
   // 关键用例：1000 行里第 10 行与第 500 行各改一处 → 两段，不能把中间 490 行全刷绿
   const base = many(1000).split('\n')
@@ -1165,6 +1192,8 @@ try {
   ok('CM 路径：视口滚动补涂 + 换标签清绿底',
     src.includes('onViewport: function () { repaintFlash() }') && src.includes('if (flashState.owner === view) clearFlash()'))
   ok('回退（textarea）路径同样标绿', src.includes('startFlash(flash.tabId, flash.ranges, container, container'))
+  ok('接线：diff 入口先归一化换行（CRLF/LF 混用不会整篇刷绿）',
+    /function diffLineRanges\(oldText, newText\) \{[\s\S]{0,200}normalizeEol\(oldText\)[\s\S]{0,120}normalizeEol\(newText\)/.test(src))
   const kernelSrc = readFileSync(new URL('../lib/vendor/entry.js', import.meta.url), 'utf8')
   ok('不动内核：entry.js 里没有标绿代码（刷新页面即生效，不用重建 cm6.js）',
     !kernelSrc.includes('startFlash') && !kernelSrc.includes('FLASH_GREEN'))
@@ -1178,8 +1207,9 @@ try {
 
   // 回归：外部 setDoc 会走内核 onChange，不挡住就会把标签标脏 → 之后每次外部改动
   // 都被 reloadTab 的「有未保存改动」拦住（症状就是"同步突然不工作了"）
+  // 注意比对必须抹平换行：磁盘 CRLF、CodeMirror 内部永远 LF，直接 === 会比不中
   ok('onChange 认得「刚同步下去的文本」，不标脏',
-    /if \(suppressDirtyText !== null && text === suppressDirtyText\)/.test(src)
+    /if \(suppressDirtyText !== null && normalizeEol\(text\) === normalizeEol\(suppressDirtyText\)\)/.test(src)
     && /setTab\(tab\.id, \{ text: text, dirty: true \}\)/.test(src))
   ok('setDoc 前先记下预期文本', src.includes('suppressDirtyText = tab.text'))
   const reloadAt = src.indexOf('setTab(tab.id, { text: data.text, loading: false })')
@@ -1837,6 +1867,18 @@ try {
     // 这条同时盯住 entry.js（源码）与 cm6.js（产物），少重建一次就会漏。
     ['行号列收窄到 22px（源码 + 产物都改了）',
       entrySrc.includes("minWidth: '22px'") && kernelSrc.includes('minWidth:"22px"') && !kernelSrc.includes('minWidth:"34px"')],
+    // 用户 2026-11-14 要求「tex/pdf 之间的分割线太粗」：那条"粗线"其实是
+    // Chromium 默认 15px 滚动条。内核侧把 .cm-scroller 改成 8px 细圆角条，
+    // 同样要源码 + 产物都改（少重建一次就会漏）。
+    ['编辑器滚动条改细（.cm-scroller 8px 圆角，源码 + 产物都改了）',
+      entrySrc.includes("'.cm-scroller::-webkit-scrollbar'") && entrySrc.includes("width: '8px'") &&
+      kernelSrc.includes('::-webkit-scrollbar') && kernelSrc.includes('"8px"') &&
+      !/\.cm-scroller::-webkit-scrollbar\{[^}]*width:1[0-9]px/.test(kernelSrc)],
+    // 面板侧：pdf 预览、文件树、日志等滚动容器也要细条，作用域限定在 [data-moling="1"] 下
+    ['面板滚动条改细（WORKBENCH_CSS 挂在根节点，作用域限定 data-moling）',
+      src.includes('var WORKBENCH_CSS = [') &&
+      src.includes('[data-moling="1"] ::-webkit-scrollbar{width:8px;height:8px}') &&
+      /data-moling': '1' \},\s*\n\s*\/\/ 细滚动条[\s\S]{0,120}h\('style', null, WORKBENCH_CSS\)/.test(src)],
     // 踩过的坑：highlightDocument 返回 {segments,bold} 包装对象，直接递给内核时
     // 内核按「每行一个 segment 数组」迭代 → lines[i].length 是 undefined → 整行跳过
     // → 一条行内样式都没涂，线上只剩 stex 兜底色，\begin{} 环境名/键全是白字。
@@ -1853,6 +1895,14 @@ try {
       entrySrc.includes('^\\\\begin\\{[^}]*\\}')],
     ['内核产物里带上了新词法（propertyName/escape 都在）',
       kernelSrc.includes('propertyName') && kernelSrc.includes('escape')],
+    // 用户 2026-11-14 报的 bug：$\%$ 之后整段变灰斜体（% 被当注释起点）。
+    // 词法里「数学分支」必须排在「注释判断」前面，且数学里的 \. 要按 escape 吃掉。
+    // 这条盯住 entry.js 源码与 cm6.js 产物两边，少重建一次就漏。
+    ['内核词法先判数学再判注释（$\\%$ 不会被当注释）',
+      /if \(state\.inMath\) \{[\s\S]{0,600}?if \(stream\.match\(\/\^\\\\\.\/\)\) return 'escape'/.test(entrySrc)
+      && entrySrc.indexOf('if (state.inMath) {') < entrySrc.indexOf("if (stream.match(/^%/)) {\n      state.inComment = true")],
+    ['内核产物里数学分支排在注释分支前面（重建后生效）',
+      kernelSrc.includes('e.inMath?n.match(/^\\$\\$/)') && !/if\(n\.match\(\/\^%\/\)\)\{?[^]{0,80}inComment=!0/.test(kernelSrc.slice(0, kernelSrc.indexOf('e.inMath?')))],
     ['补全抛错时兜底返回 null（不让补全把编辑器搞崩）',
       /onComplete: function \(context\) \{\s*try \{/.test(src)],
     ['补全弹窗配色复用主题 token（不额外写死颜色）',
