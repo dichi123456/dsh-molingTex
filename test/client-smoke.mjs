@@ -158,7 +158,9 @@ try {
     ['最近项目行', html.includes('paper') && html.includes('E:/proj/paper')],
     ['最近文件行', html.includes('main.tex')],
     ['已去掉 DSH 工作区列表', !html.includes('DSH 工作区')],
-    ['「模板」卡片', html.includes('新建中文文档') && html.includes('ctexart')],
+    ['「模板」入口卡（浏览模板库）', html.includes('浏览模板库') && html.includes('中文论文 · 英文论文 · 简历 · 幻灯片 · 实验报告等内置模板')],
+    ['启动页不再罗列模板（模板清单只在二级弹窗里）', !html.includes('ml-tpl-card') && !html.includes('ml-tpl-search') && !html.includes('ml-tpl-grid')],
+    ['空白 ctexart 骨架入口仍在启动页', html.includes('新建中文文档') && html.includes('ctexart')],
     ['行样式已就位（ml-row 多条）', rowCount >= 5]
   ]
   for (const [label, passed] of checks) passed ? ok(label) : bad(label)
@@ -1396,7 +1398,7 @@ try {
     ? ok('分类与搜索同时生效（交集）')
     : bad('分类+搜索没取交集')
 
-  // 2) 启动页渲染：搜索框 / 分类胶囊 / 卡片网格
+  // 2) 启动页只留入口，模板清单不铺在启动页（m01453 需求 1）
   store.view = 'welcome'
   store.recents = []
   store.templates = list
@@ -1404,20 +1406,39 @@ try {
   store.templateQuery = ''
   store.templateCategory = ''
   store.templateBusy = ''
+  store.templatesOpen = false
+  store.templateStep = 'list'
+  store.templatePick = null
+  store.templateTarget = ''
+  const welcomeHtml = render()
+  const welcomeChecks = [
+    ['启动页有「浏览模板库」入口', welcomeHtml.includes('浏览模板库') && welcomeHtml.includes('中文论文 · 英文论文 · 简历 · 幻灯片 · 实验报告等内置模板')],
+    ['启动页不罗列模板（无搜索框 / 无卡片网格）',
+      !welcomeHtml.includes('ml-tpl-search') && !welcomeHtml.includes('ml-tpl-card') && !welcomeHtml.includes('ml-tpl-grid') && !welcomeHtml.includes('ml-modal')],
+    ['启动页仍有空白 ctexart 骨架入口', welcomeHtml.includes('新建中文文档') && welcomeHtml.includes('ctexart')]
+  ]
+  for (const [label, passed] of welcomeChecks) passed ? ok(label) : bad(label)
+
+  // 3) 二级弹窗：点开后有分类导航 / 搜索 / 卡片网格
+  store.templatesOpen = true
   const html = render()
   const cardCount = (html.match(/class="ml-tpl-card"/g) || []).length
-  const chipCount = (html.match(/class="ml-tpl-cat[" ]/g) || []).length
-  const tplChecks = [
-    ['渲染搜索框', html.includes('class="ml-tpl-search"') && html.includes('搜索模板')],
-    ['分类胶囊含「全部」+ 3 个分类', chipCount === 4 && html.includes('全部 3') && html.includes('简历 1')],
+  const navCount = (html.match(/class="ml-tpl-navitem/g) || []).length
+  const modalChecks = [
+    ['弹窗挂到 Body 层（有遮罩 + 卡片）', html.includes('class="ml-modal-mask"') && html.includes('class="ml-modal"')],
+    ['弹窗标题 = 模板库', /class="ml-modal-title"[^>]*>模板库</.test(html)],
+    ['左侧分类导航含「全部模板」+ 3 个分类', navCount === 4 && html.includes('全部模板')],
+    ['导航高亮当前分类（默认全部）', /class="ml-tpl-navitem ml-tpl-nav-on"[^>]*><span>全部模板</.test(html)],
+    ['渲染搜索框', html.includes('class="ml-tpl-search"') && html.includes('搜索模板名称或描述')],
     ['卡片数量 = 模板数', cardCount === 3],
     ['卡片带名称 / 分类·引擎 / 描述', html.includes('中文论文') && html.includes('xelatex') && html.includes('中文期刊论文通用模板')],
     ['计数显示 3 / 3', html.includes('3 / 3')],
-    ['空白骨架入口仍在（模板之外还能一键新建）', html.includes('新建中文文档') && html.includes('ctexart')]
+    ['弹窗里也有空白骨架入口（模板之外还能一键新建）', html.includes('新建中文文档') && html.includes('ctexart')],
+    ['底部提示引导选存放文件夹', html.includes('选择模板存放的文件夹')]
   ]
-  for (const [label, passed] of tplChecks) passed ? ok(label) : bad(label)
+  for (const [label, passed] of modalChecks) passed ? ok(label) : bad(label)
 
-  // 3) 搜索过滤：只剩命中项，计数跟着变
+  // 4) 搜索过滤：只剩命中项，计数跟着变
   store.templateQuery = 'resume'
   const searched = render()
   const searchedCards = (searched.match(/class="ml-tpl-card"/g) || []).length
@@ -1425,16 +1446,16 @@ try {
     ? ok('搜索后只剩命中项，计数变 1 / 3')
     : bad('搜索过滤不对', String(searchedCards))
 
-  // 4) 分类切换：胶囊高亮 + 只显示该分类
+  // 5) 分类切换：导航高亮 + 只显示该分类
   store.templateQuery = ''
   store.templateCategory = '幻灯片'
   const byCat = render()
   const catCards = (byCat.match(/class="ml-tpl-card"/g) || []).length
-  catCards === 1 && byCat.includes('课程报告') && /class="ml-tpl-cat ml-tpl-cat-on"[^>]*>幻灯片 1/.test(byCat)
-    ? ok('分类切换只显示该分类，激活胶囊高亮')
+  catCards === 1 && byCat.includes('课程报告') && /class="ml-tpl-navitem ml-tpl-nav-on"[^>]*><span>幻灯片</.test(byCat)
+    ? ok('分类切换只显示该分类，导航高亮')
     : bad('分类切换不对', String(catCards))
 
-  // 5) 空态两句话：没读到模板 vs 搜索无结果（不能都空白）
+  // 6) 空态两句话：没读到模板 vs 搜索无结果（不能都空白）
   store.templateCategory = ''
   store.templates = []
   store.templateCategories = []
@@ -1451,7 +1472,24 @@ try {
     : bad('无结果态没文案')
   store.templateQuery = ''
 
-  // 6) 拉清单：成功填 store；失败只清空、不把整页染红
+  // 7) 第二步「新建文件」：点卡片 → 让用户选存放位置（m01453 需求 2）
+  bundle.__pickTemplate(list[0])
+  store.templateStep === 'target' && store.templatePick && store.templatePick.id === 'zh-article'
+    ? ok('点卡片进入「新建文件」第二步')
+    : bad('没进第二步', `${store.templateStep}/${store.templatePick && store.templatePick.id}`)
+  const targetHtml = render()
+  const targetChecks = [
+    ['标题变「新建文件」', /class="ml-modal-title"[^>]*>新建文件</.test(targetHtml)],
+    ['显示选中的模板名', targetHtml.includes('中文论文') && targetHtml.includes('中文论文 · xelatex · 1 个文件')],
+    ['显示「存放位置」与「选择文件夹…」', targetHtml.includes('存放位置') && targetHtml.includes('选择文件夹…')],
+    ['还没选目录时提示「还没有选择文件夹」', targetHtml.includes('还没有选择文件夹')],
+    ['创建按钮存在但未选目录时禁用', targetHtml.includes('>创建<') && /class="ml-modal-btn ml-modal-btn-on" disabled/.test(targetHtml)],
+    ['提示 main.tex 命名与不覆盖规则', targetHtml.includes('main.tex') && targetHtml.includes('不覆盖已有项目')],
+    ['有「返回」回到列表', targetHtml.includes('>返回<')]
+  ]
+  for (const [label, passed] of targetChecks) passed ? ok(label) : bad(label)
+
+  // 8) 拉清单 / 选目录 / 创建：打桩 fetch 与原生目录选择器
   const realFetch = globalThis.fetch
   const calls = []
   let failTemplates = false
@@ -1464,10 +1502,11 @@ try {
       if (failTemplates) return { ok: false, status: 500, json: async () => ({ ok: false, error: 'boom' }) }
       return reply({ templates: list, categories: ['中文论文', '简历', '幻灯片'] })
     }
+    if (endpoint === 'open-root') return reply({ root: body.root, allowedRoots: [body.root], workspaces: [] })
     if (endpoint === 'use-template') {
       return reply({
         template: { id: body.template, name: '中文论文', category: '中文论文', engine: 'xelatex' },
-        root: 'E:/proj/from-template', main: 'main.tex', files: ['main.tex']
+        root: body.root, main: 'main.tex', files: ['main.tex']
       })
     }
     if (endpoint === 'workspaces') return reply({ workspaces: [] })
@@ -1475,7 +1514,7 @@ try {
       return reply({
         root: body.root, count: 1, total: 1, skipped: 0, truncated: false,
         files: [{ rel: 'main.tex', name: 'main.tex', size: 20, mtime: 1, editable: true }],
-        tree: { name: 'from-template', rel: '', type: 'dir', children: [] }
+        tree: { name: 'chosen', rel: '', type: 'dir', children: [] }
       })
     }
     if (endpoint === 'read-file') {
@@ -1502,61 +1541,129 @@ try {
     : bad('拉清单失败处理不对', `templates=${store.templates.length} error=${store.error}`)
   failTemplates = false
 
-  // 7) 按模板落地：打 use-template、引擎跟模板、进新目录并打开主文件
+  // 8.1) 「选择文件夹…」走原生目录选择器，并先把目录登记进白名单（否则 use-template 会被拒）
+  store.templatesOpen = true
+  store.templateStep = 'target'
+  store.templatePick = list[0]
+  store.templateTarget = ''
+  store.error = ''
+  calls.length = 0
+  let pickCancelled = false
+  store.ctx = {
+    get: (name) => (name === 'uiWorkspace' ? {
+      pickDirectory: async () => (pickCancelled ? null : 'E:/chosen')
+    } : null)
+  }
+  await bundle.__pickTemplateTarget()
+  const openRootCall = calls.find((item) => item.endpoint === 'open-root')
+  openRootCall && openRootCall.body.root === 'E:/chosen'
+    ? ok('选文件夹后先调 open-root 登记白名单', JSON.stringify(openRootCall.body))
+    : bad('没调 open-root', JSON.stringify(calls.map((item) => item.endpoint)))
+  store.templateTarget === 'E:/chosen'
+    ? ok('选中的目录记进 templateTarget')
+    : bad('没记住目录', String(store.templateTarget))
+
+  // 8.2) 取消选择（picker 返回 null）→ 不改动已选目录、不报错
+  store.templateTarget = 'E:/keep'
+  pickCancelled = true
+  calls.length = 0
+  store.error = ''
+  await bundle.__pickTemplateTarget()
+  store.templateTarget === 'E:/keep' && store.error === '' && calls.length === 0
+    ? ok('取消选择时不动已选目录、不发请求')
+    : bad('取消选择处理不对', `target=${store.templateTarget} calls=${calls.length}`)
+  pickCancelled = false
+
+  // 8.3) 点「创建」：把用户选的目录当 root 落地，成功后关弹窗
   store.root = 'E:/proj'
   store.engine = 'auto'
   store.view = 'welcome'
   store.tabs = []
   store.activeId = null
+  store.templateTarget = 'E:/chosen'
+  store.templateStep = 'target'
+  store.templatePick = list[0]
+  store.templatesOpen = true
   calls.length = 0
-  await bundle.__newFromTemplate(list[0])
+  await bundle.__createFromTemplate()
   const usedCall = calls.find((item) => item.endpoint === 'use-template')
-  usedCall && usedCall.body.root === 'E:/proj' && usedCall.body.template === 'zh-article'
-    ? ok('调 use-template（root + template id）', JSON.stringify(usedCall.body))
-    : bad('没调 use-template', JSON.stringify(calls.map((item) => item.endpoint)))
+  usedCall && usedCall.body.root === 'E:/chosen' && usedCall.body.template === 'zh-article'
+    ? ok('用「用户选的目录」调 use-template（不是当前项目）', JSON.stringify(usedCall.body))
+    : bad('use-template 参数不对', JSON.stringify(usedCall && usedCall.body))
   store.engine === 'xelatex'
     ? ok('引擎跟着模板走（auto → xelatex）')
     : bad('引擎没跟模板', String(store.engine))
-  store.root === 'E:/proj/from-template'
+  store.root === 'E:/chosen'
     ? ok('进到模板落地的新目录', store.root)
     : bad('没进新目录', String(store.root))
   store.tabs.length === 1 && store.tabs[0].rel === 'main.tex'
     ? ok('自动打开落地后的 main.tex')
     : bad('没打开 main.tex', JSON.stringify(store.tabs.map((tab) => tab.rel)))
   const recent = (store.recents || [])[0]
-  recent && recent.kind === 'file' && recent.value === 'main.tex' && recent.root === 'E:/proj/from-template'
+  recent && recent.kind === 'file' && recent.value === 'main.tex' && recent.root === 'E:/chosen'
     ? ok('落地后进「最近」列表')
     : bad('没进最近列表', JSON.stringify(recent))
+  store.templatesOpen === false
+    ? ok('创建成功后自动关弹窗')
+    : bad('弹窗没关', String(store.templatesOpen))
 
-  // 8) 没选目录时先拦住：提示去「打开文件夹…」，不发请求
+  // 8.4) 没选目录就点创建：只报错、不发请求
+  store.root = ''
+  store.recents = []
+  store.error = ''
+  store.tabs = []
+  store.templateTarget = ''
+  store.templateStep = 'target'
+  store.templatePick = list[0]
+  store.templatesOpen = true
+  calls.length = 0
+  await bundle.__createFromTemplate()
+  store.error.includes('先「选择文件夹…」') && calls.length === 0 && store.templatesOpen === true
+    ? ok('没选目录时点创建只提示，不发请求、不关弹窗')
+    : bad('没拦住无目录时创建', `error=${store.error} calls=${calls.length}`)
+
+  // 8.5) 直接调 newFromTemplate 且不传目录：回退逻辑仍在（无项目、无最近目录 → 提示）
   store.root = ''
   store.recents = []
   store.error = ''
   store.tabs = []
   calls.length = 0
   await bundle.__newFromTemplate(list[0])
-  store.error.includes('先「打开文件夹…」') && calls.length === 0
+  store.error.includes('先选一个存放位置') && calls.length === 0
     ? ok('没有目标目录时先提示，不瞎落地')
     : bad('没拦住在无目录时落地', `error=${store.error} calls=${calls.length}`)
+
+  // 8.6) 关弹窗要清掉第二步状态（下次打开回到列表）
+  store.templateStep = 'target'
+  store.templatePick = list[0]
+  store.templateTarget = 'E:/chosen'
+  bundle.__closeTemplates()
+  store.templatesOpen === false && store.templateStep === 'list' && store.templatePick === null && store.templateTarget === ''
+    ? ok('关闭弹窗时清掉第二步状态')
+    : bad('关弹窗没清状态', JSON.stringify({ step: store.templateStep, pick: store.templatePick, target: store.templateTarget }))
 
   globalThis.fetch = realFetch
   Object.assign(store, {
     root: '', view: 'welcome', tabs: [], activeId: null, tree: null, files: [],
     templates: [], templateCategories: [], templateQuery: '', templateCategory: '', templateBusy: '',
+    templatesOpen: false, templateStep: 'list', templatePick: null, templateTarget: '',
     error: '', notice: ''
   })
 
-  // 9) 接线：boot 拉清单；样式用主题 token 且卡片不占 ml-row（否则启动页行数断言会破）
+  // 9) 接线：boot 拉清单；弹窗挂在 Body 层；样式走主题 token
   const wiring = [
     ['boot 里拉模板清单', src.includes('loadTemplates()')],
-    ['模板卡用 .ml-tpl-card，不占用 .ml-row 计数',
-      src.includes('className: \'ml-tpl-grid\'') && !/className: 'ml-row'[\s\S]{0,80}templateBusy/.test(src)],
-    ['搜索框 / 胶囊 / 卡片样式齐全',
-      ['.ml-tpl-search', '.ml-tpl-cat-on', '.ml-tpl-grid', '.ml-tpl-card', '.ml-tpl-desc'].every((name) => src.includes(name))],
+    ['弹窗挂在 Body 层（启动页与工作台都能弹）', src.includes('h(TemplateDialog, { store: store })')],
+    ['弹窗受 store.templatesOpen 控制', src.includes('if (!store.templatesOpen) return null')],
+    ['hook 写在提前 return 之前（否则 React #310）',
+      /React\.useEffect\(function \(\) \{\s*if \(!state\.templatesOpen\) return undefined[\s\S]{0,600}if \(!store\.templatesOpen\) return null/.test(src)],
+    ['模板卡不占用启动页 .ml-row 计数', src.includes("className: 'ml-tpl-grid'")],
+    ['弹窗 / 导航 / 搜索 / 卡片 / 路径样式齐全',
+      ['.ml-modal-mask', '.ml-modal', '.ml-tpl-nav-on', '.ml-tpl-search', '.ml-tpl-grid', '.ml-tpl-card', '.ml-tpl-path'].every((name) => src.includes(name))],
     ['模板区样式走主题 token（不硬编码白底）',
-      /\.ml-tpl-card\{[\s\S]{0,400}--dsw-alias-bg-layer-1/.test(src) && !/\.ml-tpl-(card|grid|search)\{[^}]*#fff/i.test(src)],
-    ['卡片忙态不可重复点（防连点落地两份）',
-      src.includes("data-busy") && src.includes('if (!busy) newFromTemplate(item)')]
+      /\.ml-tpl-card\{[\s\S]{0,400}--dsw-alias-bg-layer-1/.test(src) && !/\.ml-tpl-(card|grid|search|modal)\{[^}]*#fff/i.test(src)],
+    ['忙态不可重复点（防连点落地两份）', src.includes('if (state.templateBusy) return') && src.includes('disabled: busy || !target')],
+    ['Esc 关闭（第二步先回列表）', src.includes("event.key !== 'Escape'") && src.includes("if (state.templateStep === 'target') patch({ templateStep: 'list', templatePick: null })")]
   ]
   for (const [label, passed] of wiring) passed ? ok(label) : bad(label)
 } catch (error) {
