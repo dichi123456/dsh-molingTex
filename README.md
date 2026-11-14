@@ -1,6 +1,6 @@
 # dsh-plugin-moling-latex
 
-**墨灵 LaTeX 的 DSH 插件**：在 DSH 右侧栏打开墨灵TeX 工作台 —— 目录树 · 编辑 · 编译 · 日志 · PDF 预览 · SyncTeX 双向定位；另带 5 个 Agent 工具，让模型直接编译论文、读报错、定位源码行。
+**墨灵 LaTeX 的 DSH 插件**：在 DSH 右侧栏打开墨灵TeX 工作台 —— 目录树 · 编辑 · 编译 · 日志 · PDF 预览 · SyncTeX 双向定位 · **21 个内置模板**；另带 5 个 Agent 工具，让模型直接编译论文、读报错、定位源码行。
 
 ## 安装
 
@@ -17,7 +17,7 @@ github:dichi123456/dsh-molingTex
 ### 指定版本（Release 安装包）
 
 ```
-plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.6.6/dsh-plugin-moling-latex-0.6.6.tgz
+plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.7.0/dsh-plugin-moling-latex-0.7.0.tgz
 ```
 
 ### 本地目录
@@ -34,6 +34,14 @@ plugin_manager install_bundle  <本仓库本地路径>
 ## 能做什么
 
 **启动页**：进来先看「最近」—— 工作区与文件分两组、各最多 5 条，点一个才进工作台；不自动打开任何项目。
+
+**模板库**：启动页「模板」区有 21 个内置模板（中文/英文论文、IEEE、Elsevier、Wiley、国赛论文、简历、Beamer 幻灯片、实验报告），可按分类点选、也可搜索（名称/描述/引擎都参与匹配）。点一张卡就把整套模板**落地成新项目**并打开主文件：
+
+- 主文件统一叫 `main.tex`；`.cls` / `.sty` / `.bib` / `.bst` 与图片按原始相对路径逐字节写出（国赛模板的 `figures/`、Elsevier 的 `figs/` 都在）；
+- 目标目录里已经有 `main.tex` 时**改落到 `<模板id>[-n]/` 子目录**，绝不覆盖已有项目；
+- 编译引擎跟着模板走（中文/幻灯片/简历 → `xelatex`，英文期刊/会议 → `pdflatex`），省得手点；
+- 模板素材由宿主半侧从 `lib/templates/` 读盘下发，不进浏览器包（否则首屏要多背 1.1 MB）；清单端点只回元数据。
+- 模板与桌面版墨灵TeX 同源，改模板后在本仓库跑 `node tools/sync-templates.mjs` 重新同步。
 
 **工作台**
 

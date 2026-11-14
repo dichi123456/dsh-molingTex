@@ -4,11 +4,12 @@
  * 用假 req/res 直接驱动 createPanelHandler，覆盖：
  *   探活 / TeX 状态 / 工作区 / 文件树（嵌套 + 扁平）/ 白名单拒绝 / 路径越界 /
  *   读文件 / 写文件 / 非文本拒绝 / 编译 / PDF base64 / PDF 元信息 / 单页栅格化 /
- *   清理 / 显式打开目录（open-root）/ 按绝对路径打开文件（open-file）/ 未知端点 / 坏 JSON
+ *   清理 / 显式打开目录（open-root）/ 按绝对路径打开文件（open-file）/ 未知端点 / 坏 JSON /
+ *   模板库（templates 清单 / use-template 落地含二进制与重名换目录）
  *
  *   node test/server-smoke.mjs
  */
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -314,6 +315,95 @@ console.log('9) 外部改动探测 stat（大模型改文件 → 面板自动刷
   bare.json && bare.json.ok && /^[0-9a-f]{20}$/.test(bare.json.value.dirs || '')
     ? ok('不传 paths 也能跑（只回目录指纹）')
     : bad('缺 paths 报错', JSON.stringify(bare.json).slice(0, 160))
+
+  rmSync(dir, { recursive: true, force: true })
+}
+
+console.log('10) 模板库（templates / use-template）')
+{
+  const list = await call('POST', 'templates', {})
+  const value = list.json && list.json.ok ? list.json.value : null
+  if (!value) bad('templates', JSON.stringify(list.json).slice(0, 200))
+  else {
+    const items = value.templates || []
+    items.length >= 20
+      ? ok('模板清单条目数', `${items.length} 个`)
+      : bad('模板清单太少', String(items.length))
+    Array.isArray(value.categories) && value.categories.length === 5
+      ? ok('分类是 5 个', value.categories.join(' / '))
+      : bad('分类不对', JSON.stringify(value.categories))
+    const cumcm = items.find((item) => item.id === 'cumcm')
+    cumcm && cumcm.files >= 9 && cumcm.bytes > 400000 && cumcm.main === 'main.tex'
+      ? ok('cumcm 带 cls/sty/图片（不是只有主文件）', `${cumcm.files} 文件 / ${Math.round(cumcm.bytes / 1024)} KB`)
+      : bad('cumcm 元数据不对', JSON.stringify(cumcm))
+    // 清单只回元数据：内容（tex 正文）绝不能出现在这里，否则首屏就背 1.1 MB
+    items.every((item) => typeof item.bytes === 'number' && !('content' in item) && !('files' in item && Array.isArray(item.files)))
+      ? ok('清单只回元数据（不含正文/文件列表）')
+      : bad('清单混进了正文')
+  }
+
+  // 落地到空目录：主文件 + 附属文件都要真写下去
+  const dir = mkdtempSync(join(tmpdir(), 'moling-tpl-'))
+  await call('POST', 'open-root', { root: dir })
+  const used = await call('POST', 'use-template', { root: dir, template: 'cumcm' })
+  const usedValue = used.json && used.json.ok ? used.json.value : null
+  if (!usedValue) bad('use-template', JSON.stringify(used.json).slice(0, 200))
+  else {
+    const target = usedValue.root
+    existsSync(join(target, 'main.tex')) && existsSync(join(target, 'cumcmthesis.cls')) && existsSync(join(target, 'figures', 'cat.pdf'))
+      ? ok('落地主文件 + cls + 子目录图片', target.replace(dir, '.'))
+      : bad('落地文件不全', String(target))
+    const main = existsSync(join(target, 'main.tex')) ? readFileSync(join(target, 'main.tex'), 'utf8') : ''
+    const mainBytes = Buffer.byteLength(main, 'utf8')
+    main.includes('cumcmthesis') && mainBytes > 20000
+      ? ok('主文件内容是真模板（不是空骨架）', `${mainBytes} 字节`)
+      : bad('主文件内容不对', String(mainBytes))
+    const png = existsSync(join(target, 'figures', 'upload.png')) ? readFileSync(join(target, 'figures', 'upload.png')) : null
+    png && png.length === 230780 && png[0] === 0x89 && png[1] === 0x50
+      ? ok('二进制图片按字节落地（没被当文本转码）', `${png.length} 字节`)
+      : bad('图片落地损坏', png ? `${png.length} 字节` : '缺失')
+    usedValue.main === 'main.tex' && usedValue.template && usedValue.template.engine === 'xelatex'
+      ? ok('返回落地信息（main / engine）', usedValue.template.engine)
+      : bad('返回结构不对', JSON.stringify(usedValue.template))
+  }
+
+  // 同一目录再落一次：main.tex 已存在 → 改落 <root>/cumcm，绝不覆盖已有项目
+  const again = await call('POST', 'use-template', { root: dir, template: 'cumcm' })
+  const againValue = again.json && again.json.ok ? again.json.value : null
+  againValue && againValue.root !== (usedValue && usedValue.root) && againValue.root === join(dir, 'cumcm')
+    ? ok('重名换目录，不覆盖已有 main.tex', againValue.root.replace(dir, '.'))
+    : bad('重名没换目录', String(againValue && againValue.root))
+
+  // 再落第三次：cumcm 子目录也占了 → 递增到 cumcm-2（不互相覆盖）
+  const again2 = await call('POST', 'use-template', { root: dir, template: 'cumcm' })
+  const again2Value = again2.json && again2.json.ok ? again2.json.value : null
+  again2Value && again2Value.root === join(dir, 'cumcm-2')
+    ? ok('同名目录占满后递增到 -2', again2Value.root.replace(dir, '.'))
+    : bad('递增目录名不对', String(again2Value && again2Value.root))
+
+  // 目标目录里已有 main.tex（手工建的项目）→ 也必须换目录，而不是把别人的 main.tex 冲掉
+  writeFileSync(join(dir, 'main.tex'), '% 我自己的主文件\n')
+  const third = await call('POST', 'use-template', { root: dir, template: 'zh-article' })
+  const thirdValue = third.json && third.json.ok ? third.json.value : null
+  thirdValue && thirdValue.root !== dir && readFileSync(join(dir, 'main.tex'), 'utf8').includes('我自己的主文件')
+    ? ok('不碰用户已有的 main.tex', thirdValue.root.replace(dir, '.'))
+    : bad('冲掉了已有 main.tex', String(thirdValue && thirdValue.root))
+
+  // 未知模板 / 空模板 id：明确报错，不静默成功
+  const unknown = await call('POST', 'use-template', { root: dir, template: 'no-such-template' })
+  unknown.json && unknown.json.ok === false && /没有这个模板/.test(unknown.json.error)
+    ? ok('未知模板明确报错')
+    : bad('未知模板没报错', JSON.stringify(unknown.json).slice(0, 160))
+  const empty = await call('POST', 'use-template', { root: dir })
+  empty.json && empty.json.ok === false
+    ? ok('缺 template 参数报错')
+    : bad('缺参数没报错', JSON.stringify(empty.json).slice(0, 160))
+
+  // 白名单外的 root 必须被挡（模板端点同样不能绕开 allowedRoots）
+  const outside = await call('POST', 'use-template', { root: join(tmpdir(), 'moling-tpl-outside'), template: 'zh-article' })
+  outside.json && outside.json.ok === false
+    ? ok('白名单外的 root 被挡')
+    : bad('越界 root 没挡住', JSON.stringify(outside.json).slice(0, 160))
 
   rmSync(dir, { recursive: true, force: true })
 }

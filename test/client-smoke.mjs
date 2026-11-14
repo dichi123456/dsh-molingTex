@@ -1368,5 +1368,200 @@ try {
   bad('自编测试抛错', String(error.message))
 }
 
+console.log('27) 模板库：清单 / 搜索分类 / 按模板落地')
+try {
+  const store = bundle.__store
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const render = () => ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
+
+  const list = [
+    { id: 'zh-article', name: '中文论文', description: '中文期刊论文通用模板', category: '中文论文', engine: 'xelatex', accent: '#2563eb', layout: 'column', main: 'main.tex', files: 1, bytes: 1594 },
+    { id: 'resume-en', name: '英文简历', description: 'One page resume for internship', category: '简历', engine: 'xelatex', accent: '#16a34a', layout: 'stack', main: 'main.tex', files: 1, bytes: 3436 },
+    { id: 'slides-course', name: '课程报告', description: 'Beamer slides for course report', category: '幻灯片', engine: 'xelatex', accent: '#d97706', layout: 'side', main: 'main.tex', files: 1, bytes: 1858 }
+  ]
+
+  // 1) 筛选纯函数：分类精确 + 搜索词模糊（名称/描述/分类/引擎）
+  const filter = bundle.__filterTemplates
+  typeof filter === 'function' ? ok('导出 __filterTemplates') : bad('缺少 __filterTemplates')
+  filter(list, '', '简历').length === 1 && filter(list, '', '简历')[0].id === 'resume-en'
+    ? ok('分类筛选')
+    : bad('分类筛选', JSON.stringify(filter(list, '', '简历').map((item) => item.id)))
+  filter(list, 'resume', '').length === 1 && filter(list, 'beamer', '').length === 1 && filter(list, 'xelatex', '').length === 3
+    ? ok('搜索命中名称 / 描述 / 引擎')
+    : bad('搜索没命中', `${filter(list, 'resume', '').length}/${filter(list, 'beamer', '').length}/${filter(list, 'xelatex', '').length}`)
+  filter(list, '  RESUME  ', '').length === 1 && filter(list, '', '').length === 3
+    ? ok('大小写与首尾空格不敏感')
+    : bad('大小写/空格处理不对')
+  filter(list, 'beamer', '简历').length === 0
+    ? ok('分类与搜索同时生效（交集）')
+    : bad('分类+搜索没取交集')
+
+  // 2) 启动页渲染：搜索框 / 分类胶囊 / 卡片网格
+  store.view = 'welcome'
+  store.recents = []
+  store.templates = list
+  store.templateCategories = ['中文论文', '简历', '幻灯片']
+  store.templateQuery = ''
+  store.templateCategory = ''
+  store.templateBusy = ''
+  const html = render()
+  const cardCount = (html.match(/class="ml-tpl-card"/g) || []).length
+  const chipCount = (html.match(/class="ml-tpl-cat[" ]/g) || []).length
+  const tplChecks = [
+    ['渲染搜索框', html.includes('class="ml-tpl-search"') && html.includes('搜索模板')],
+    ['分类胶囊含「全部」+ 3 个分类', chipCount === 4 && html.includes('全部 3') && html.includes('简历 1')],
+    ['卡片数量 = 模板数', cardCount === 3],
+    ['卡片带名称 / 分类·引擎 / 描述', html.includes('中文论文') && html.includes('xelatex') && html.includes('中文期刊论文通用模板')],
+    ['计数显示 3 / 3', html.includes('3 / 3')],
+    ['空白骨架入口仍在（模板之外还能一键新建）', html.includes('新建中文文档') && html.includes('ctexart')]
+  ]
+  for (const [label, passed] of tplChecks) passed ? ok(label) : bad(label)
+
+  // 3) 搜索过滤：只剩命中项，计数跟着变
+  store.templateQuery = 'resume'
+  const searched = render()
+  const searchedCards = (searched.match(/class="ml-tpl-card"/g) || []).length
+  searchedCards === 1 && searched.includes('英文简历') && !searched.includes('课程报告') && searched.includes('1 / 3')
+    ? ok('搜索后只剩命中项，计数变 1 / 3')
+    : bad('搜索过滤不对', String(searchedCards))
+
+  // 4) 分类切换：胶囊高亮 + 只显示该分类
+  store.templateQuery = ''
+  store.templateCategory = '幻灯片'
+  const byCat = render()
+  const catCards = (byCat.match(/class="ml-tpl-card"/g) || []).length
+  catCards === 1 && byCat.includes('课程报告') && /class="ml-tpl-cat ml-tpl-cat-on"[^>]*>幻灯片 1/.test(byCat)
+    ? ok('分类切换只显示该分类，激活胶囊高亮')
+    : bad('分类切换不对', String(catCards))
+
+  // 5) 空态两句话：没读到模板 vs 搜索无结果（不能都空白）
+  store.templateCategory = ''
+  store.templates = []
+  store.templateCategories = []
+  const emptyHtml = render()
+  emptyHtml.includes('没有读到内置模板')
+    ? ok('模板清单为空时有说明（不空白、不崩）')
+    : bad('空模板态没文案')
+  store.templates = list
+  store.templateCategories = ['中文论文', '简历', '幻灯片']
+  store.templateQuery = 'zzz-not-exist'
+  const noneHtml = render()
+  noneHtml.includes('没有匹配的模板') && (noneHtml.match(/class="ml-tpl-card"/g) || []).length === 0
+    ? ok('搜索无结果时有引导文案')
+    : bad('无结果态没文案')
+  store.templateQuery = ''
+
+  // 6) 拉清单：成功填 store；失败只清空、不把整页染红
+  const realFetch = globalThis.fetch
+  const calls = []
+  let failTemplates = false
+  globalThis.fetch = async (url, opts) => {
+    const endpoint = String(url).split('/').pop()
+    const body = opts && opts.body ? JSON.parse(opts.body) : {}
+    calls.push({ endpoint, body })
+    const reply = (value) => ({ ok: true, status: 200, json: async () => ({ ok: true, value }) })
+    if (endpoint === 'templates') {
+      if (failTemplates) return { ok: false, status: 500, json: async () => ({ ok: false, error: 'boom' }) }
+      return reply({ templates: list, categories: ['中文论文', '简历', '幻灯片'] })
+    }
+    if (endpoint === 'use-template') {
+      return reply({
+        template: { id: body.template, name: '中文论文', category: '中文论文', engine: 'xelatex' },
+        root: 'E:/proj/from-template', main: 'main.tex', files: ['main.tex']
+      })
+    }
+    if (endpoint === 'workspaces') return reply({ workspaces: [] })
+    if (endpoint === 'tree') {
+      return reply({
+        root: body.root, count: 1, total: 1, skipped: 0, truncated: false,
+        files: [{ rel: 'main.tex', name: 'main.tex', size: 20, mtime: 1, editable: true }],
+        tree: { name: 'from-template', rel: '', type: 'dir', children: [] }
+      })
+    }
+    if (endpoint === 'read-file') {
+      return reply({ path: 'x', rel: body.path, name: body.path, text: '\\documentclass{ctexart}', size: 20, mtime: 1 })
+    }
+    return reply({})
+  }
+
+  store.templates = []
+  store.templateCategories = []
+  store.error = ''
+  await bundle.__loadTemplates()
+  store.templates.length === 3 && store.templateCategories.length === 3
+    ? ok('loadTemplates 填进清单与分类')
+    : bad('loadTemplates 没填上', `${store.templates.length}/${store.templateCategories.length}`)
+
+  failTemplates = true
+  store.templates = list
+  store.templateCategories = ['中文论文']
+  store.error = ''
+  await bundle.__loadTemplates()
+  store.templates.length === 0 && store.error === ''
+    ? ok('拉清单失败只清空，不写 store.error（模板区是配菜）')
+    : bad('拉清单失败处理不对', `templates=${store.templates.length} error=${store.error}`)
+  failTemplates = false
+
+  // 7) 按模板落地：打 use-template、引擎跟模板、进新目录并打开主文件
+  store.root = 'E:/proj'
+  store.engine = 'auto'
+  store.view = 'welcome'
+  store.tabs = []
+  store.activeId = null
+  calls.length = 0
+  await bundle.__newFromTemplate(list[0])
+  const usedCall = calls.find((item) => item.endpoint === 'use-template')
+  usedCall && usedCall.body.root === 'E:/proj' && usedCall.body.template === 'zh-article'
+    ? ok('调 use-template（root + template id）', JSON.stringify(usedCall.body))
+    : bad('没调 use-template', JSON.stringify(calls.map((item) => item.endpoint)))
+  store.engine === 'xelatex'
+    ? ok('引擎跟着模板走（auto → xelatex）')
+    : bad('引擎没跟模板', String(store.engine))
+  store.root === 'E:/proj/from-template'
+    ? ok('进到模板落地的新目录', store.root)
+    : bad('没进新目录', String(store.root))
+  store.tabs.length === 1 && store.tabs[0].rel === 'main.tex'
+    ? ok('自动打开落地后的 main.tex')
+    : bad('没打开 main.tex', JSON.stringify(store.tabs.map((tab) => tab.rel)))
+  const recent = (store.recents || [])[0]
+  recent && recent.kind === 'file' && recent.value === 'main.tex' && recent.root === 'E:/proj/from-template'
+    ? ok('落地后进「最近」列表')
+    : bad('没进最近列表', JSON.stringify(recent))
+
+  // 8) 没选目录时先拦住：提示去「打开文件夹…」，不发请求
+  store.root = ''
+  store.recents = []
+  store.error = ''
+  store.tabs = []
+  calls.length = 0
+  await bundle.__newFromTemplate(list[0])
+  store.error.includes('先「打开文件夹…」') && calls.length === 0
+    ? ok('没有目标目录时先提示，不瞎落地')
+    : bad('没拦住在无目录时落地', `error=${store.error} calls=${calls.length}`)
+
+  globalThis.fetch = realFetch
+  Object.assign(store, {
+    root: '', view: 'welcome', tabs: [], activeId: null, tree: null, files: [],
+    templates: [], templateCategories: [], templateQuery: '', templateCategory: '', templateBusy: '',
+    error: '', notice: ''
+  })
+
+  // 9) 接线：boot 拉清单；样式用主题 token 且卡片不占 ml-row（否则启动页行数断言会破）
+  const wiring = [
+    ['boot 里拉模板清单', src.includes('loadTemplates()')],
+    ['模板卡用 .ml-tpl-card，不占用 .ml-row 计数',
+      src.includes('className: \'ml-tpl-grid\'') && !/className: 'ml-row'[\s\S]{0,80}templateBusy/.test(src)],
+    ['搜索框 / 胶囊 / 卡片样式齐全',
+      ['.ml-tpl-search', '.ml-tpl-cat-on', '.ml-tpl-grid', '.ml-tpl-card', '.ml-tpl-desc'].every((name) => src.includes(name))],
+    ['模板区样式走主题 token（不硬编码白底）',
+      /\.ml-tpl-card\{[\s\S]{0,400}--dsw-alias-bg-layer-1/.test(src) && !/\.ml-tpl-(card|grid|search)\{[^}]*#fff/i.test(src)],
+    ['卡片忙态不可重复点（防连点落地两份）',
+      src.includes("data-busy") && src.includes('if (!busy) newFromTemplate(item)')]
+  ]
+  for (const [label, passed] of wiring) passed ? ok(label) : bad(label)
+} catch (error) {
+  bad('模板库测试抛错', String(error.message))
+}
+
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)
 process.exit(failures === 0 ? 0 : 1)
