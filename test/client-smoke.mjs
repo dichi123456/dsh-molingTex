@@ -230,7 +230,8 @@ try {
   const checks = [
     ['首页按钮', html.includes('首页')],
     ['「目录」按钮已去掉', !html.includes('>目录<')],
-    ['树开关', html.includes('树')],
+    ['文件树开关（按钮名是「文件树」不是「树」）', html.includes('>文件树<')],
+    ['文件大纲开关（按钮名是「文件大纲」不是「提纲」）', html.includes('>文件大纲<')],
     ['编译按钮', html.includes('编译')],
     ['日志页签', html.includes('日志')],
     ['PDF 页签', html.includes('PDF')],
@@ -541,12 +542,12 @@ try {
   const checks = [
     ['顶栏有「换行」', html.includes('>换行<')],
     ['顶栏有「保存」分体按钮（默认手动保存）', html.includes('>手动保存<') && html.includes('>▾<')],
-    // 顶栏分组：树+提纲 一个圆角底色区，换行+保存+新建+自编 另一个
-    ['分组一：树 + 提纲 同底色圆角区', (function () {
+    // 顶栏分组：文件树+文件大纲 一个圆角底色区，换行+保存+新建+自编 另一个
+    ['分组一：文件树 + 文件大纲 同底色圆角区', (function () {
       const from = html.indexOf('data-btn-group="view"')
       const to = html.indexOf('data-btn-group="edit"')
       const seg = from > -1 && to > from ? html.slice(from, to) : ''
-      return seg.includes('>树<') && seg.includes('>提纲<')
+      return seg.includes('>文件树<') && seg.includes('>文件大纲<')
     })()],
     ['分组二：换行 + 保存 + 新建 + 自编 同底色圆角区', (function () {
       const from = html.indexOf('data-btn-group="edit"')
@@ -656,8 +657,8 @@ try {
   }
   const outlineHtml = render()
   const outlineChecks = [
-    ['顶栏有「提纲」按钮', outlineHtml.includes('>提纲<')],
-    ['顶栏有「新建」按钮（提纲旁边）', outlineHtml.includes('>新建<') && outlineHtml.indexOf('>提纲<') < outlineHtml.indexOf('>新建<')],
+    ['顶栏有「文件大纲」按钮', outlineHtml.includes('>文件大纲<')],
+    ['顶栏有「新建」按钮（文件大纲旁边）', outlineHtml.includes('>新建<') && outlineHtml.indexOf('>文件大纲<') < outlineHtml.indexOf('>新建<')],
     ['顶栏有「自编」按钮（自动编译开关，在新建右边）',
       outlineHtml.includes('>自编<') && outlineHtml.indexOf('>新建<') < outlineHtml.indexOf('>自编<')],
     ['浮层显示章节标题', outlineHtml.includes('引言') && outlineHtml.includes('车辆模型')],
@@ -983,6 +984,10 @@ try {
   ok('换项目后旧文件树放下（不残留上一个项目的文件）',
     store.tree === null && store.files.length === 0 && store.busy === '')
   ok('root 已切成新项目', store.root === 'E:/proj/b')
+  // 用户 2026-11-14 要求：进项目不再默认顶出文件树抽屉（要点「文件树」才开）
+  ok('进项目默认不展开文件树（treeOpen 保持关）', store.treeOpen === false)
+  ok('enterRoot 默认值是「不自动开树」',
+    body.includes("treeOpen: settings.treeOpen === true") && !body.includes('settings.treeOpen !== false'))
 
   // 还是同一个项目（大小写不同也算同一个）→ 标签与 PDF 留着
   seedProject('E:/Proj/B')
@@ -1334,7 +1339,7 @@ try {
     src.includes('enteringRoot = true') && src.includes('if (enteringRoot) return Promise.resolve(false)'))
   ok('自动打开失败会补一次、没主 tex 时给出说明',
     src.includes('if (!findTab(root, rel)) return openTab(root, rel)')
-    && src.includes('这个项目里没有 .tex，需要自己从「树」里选文件'))
+    && src.includes('这个项目里没有 .tex，需要自己从「文件树」里选文件'))
 
   // 4) 发送选中内容：右键那一刻就把选区抓下来，菜单期间丢了还有备份
   ok('右键抓下选区（菜单后丢失也能发）',
