@@ -1828,7 +1828,14 @@ try {
     ['内核产物含 onComplete（重建后确实带上了补全）', kernelSrc.includes('onComplete')],
     ['编辑器把补全源接进 create（onComplete → completeLatex）',
       src.includes('onComplete: function (context)') && src.includes('return completeLatex({ text: context.state.doc.toString(), pos: context.pos })')],
-    ['KERNEL_VERSION 加一（打掉浏览器旧缓存）', src.includes("var KERNEL_VERSION = '5'")],
+    // 别写死具体数字：每次重建内核都要加一，写死就会「重建一次红一次」。
+    // 只要求它是数字且不低于 5（行内上色那版）。
+    ['KERNEL_VERSION 是数字且已加过（打掉浏览器旧缓存）',
+      Number((/var KERNEL_VERSION = '(\d+)'/.exec(src) || [])[1]) >= 5],
+    // 用户 2026-11-14 要求「显示行号的面板窄一点」：行号列从 34px 收到 22px。
+    // 这条同时盯住 entry.js（源码）与 cm6.js（产物），少重建一次就会漏。
+    ['行号列收窄到 22px（源码 + 产物都改了）',
+      entrySrc.includes("minWidth: '22px'") && kernelSrc.includes('minWidth:"22px"') && !kernelSrc.includes('minWidth:"34px"')],
     // 踩过的坑：highlightDocument 返回 {segments,bold} 包装对象，直接递给内核时
     // 内核按「每行一个 segment 数组」迭代 → lines[i].length 是 undefined → 整行跳过
     // → 一条行内样式都没涂，线上只剩 stex 兜底色，\begin{} 环境名/键全是白字。
