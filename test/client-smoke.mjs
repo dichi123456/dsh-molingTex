@@ -392,6 +392,7 @@ try {
 console.log('11) PDF 预览：降分辨率图片（不把整份 PDF 交给内置阅读器）')
 try {
   const store = bundle.__store
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   const render = () => ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
   store.view = 'workbench'
   store.pane = 'pdf'
@@ -414,10 +415,39 @@ try {
     ['带 mtime 版本号（可长期缓存）', pageUrl.includes('v=1712345678')],
     ['首屏立即加载、其余懒加载', /loading="eager"/.test(html) && /loading="lazy"/.test(html)],
     ['不再用 iframe 预览', !/<iframe/.test(html)],
-    ['清晰度三档 72/96/144', bundle.__DPI_CHOICES.map((choice) => choice.value).join() === '72,96,144'],
-    ['按加载前占位比例（防跳动）', /aspect-ratio:1\/1\.414/.test(html) || /aspect-ratio:1 \/ 1\.414/.test(html)]
+    ['清晰度四档 48/72/96/144', bundle.__DPI_CHOICES.map((choice) => choice.value).join() === '48,72,96,144'],
+    ['按加载前占位比例（防跳动）', /aspect-ratio:595\.276 \/ 841\.89/.test(html) || /aspect-ratio:595\.276\/841\.89/.test(html)]
   ]
   for (const [label, passed] of checks) passed ? ok(label) : bad(label)
+
+  // 幻灯片（beamer 4:3）：每页尺寸不同，容器必须按该页真实比例占位，
+  // 否则会被当成 A4 纵向拉伸（用户报的「幻灯片比例不友好」）。
+  store.pdfPageSize = { width: 362.83, height: 272.13 }
+  store.pdfPageSizes = [{ width: 362.83, height: 272.13 }, { width: 362.83, height: 272.13 }, { width: 595.276, height: 841.89 }]
+  const slides = render()
+  const aspectFor = bundle.__pageAspectFor
+  const sizeFor = bundle.__pageSizeFor
+  const slideChecks = [
+    ['幻灯片页按自身 4:3 比例占位', /aspect-ratio:362\.83 \/ 272\.13/.test(slides) || /aspect-ratio:362\.83\/272\.13/.test(slides)],
+    ['同一份 PDF 里混排的 A4 页仍按 A4 占位', /aspect-ratio:595\.276 \/ 841\.89/.test(slides) || /aspect-ratio:595\.276\/841\.89/.test(slides)],
+    ['页面图自身不写 aspect-ratio（会压过图片固有比例）', !/pdfPage: \{[^}]*aspectRatio/.test(src)],
+    ['逐页尺寸取不到时退回首页尺寸', (() => {
+      const one = sizeFor({ pdfPageSize: { width: 400, height: 300 }, pdfPageSizes: null }, 2)
+      return one.width === 400 && one.height === 300
+    })()],
+    ['实测像素比例优先于 pdfinfo（/Rotate 只有像素知道）', (() => {
+      const rotated = sizeFor({
+        pdfPageSize: { width: 595.276, height: 841.89 },
+        pdfPageSizes: [{ width: 595.276, height: 841.89 }],
+        pdfPageRatios: { 1: { width: 1684, height: 1190 } }
+      }, 1)
+      return Math.abs(rotated.height - 595.276 * (1190 / 1684)) < 0.01
+    })()],
+    ['比例字符串保留 4 位小数', aspectFor({ pdfPageSize: { width: 362.83, height: 272.13 } }, 1) === '362.83 / 272.13']
+  ]
+  for (const [label, passed] of slideChecks) passed ? ok(label) : bad(label)
+  store.pdfPageSize = null
+  store.pdfPageSizes = null
 
   // 中文目录要编码，否则 query 里的 & 与中文都会出问题
   store.pdfRel = '论文/main.pdf'
@@ -587,7 +617,7 @@ try {
       const warn = html.indexOf('var(--dsw-alias-state-warn-primary')
       return amber > view && amber < edit && warn > view && warn < edit
     })()],
-    ['组内竖分隔线：树 | 提纲 一条、换行 | 保存 | 新建 | 自编 三条', (function () {
+    ['组内竖分隔线：文件树 | 文件大纲 一条、换行 | 保存 | 新建 | 自编 三条', (function () {
       const viewFrom = html.indexOf('data-btn-group="view"')
       const editFrom = html.indexOf('data-btn-group="edit"')
       const viewSeg = viewFrom > -1 && editFrom > viewFrom ? html.slice(viewFrom, editFrom) : ''
@@ -626,8 +656,12 @@ try {
       src.includes("pdfScroll: { flex: 1, overflow: 'auto', padding: 0, minHeight: 0, background: 'transparent'") &&
       !src.includes("pdfScroll: { flex: 1, overflow: 'auto', padding: '8px 10px'")],
     ['PDF 页面图不再有投影/圆角（深色底上就是一条黑边）',
-      src.includes("background: '#fff', borderRadius: 0, aspectRatio: '1 / 1.414'") &&
-      !/pdfPage: \{[\s\S]{0,260}?boxShadow/.test(src)],
+      src.includes("background: '#fff', borderRadius: 0, objectFit: 'contain'") &&
+      !/pdfPage: \{[\s\S]{0,300}?boxShadow/.test(src)],
+    // 用户 2026-11-14 报「幻灯片比例不友好」：aspect-ratio 写在图片上会压过图片固有比例，
+    // beamer 4:3 / 16:9 被纵向拉成 A4。比例必须放在外层容器（pdfPageBox）上。
+    ['页面图不再写死 A4 比例（比例交给外层容器）', !/pdfPage: \{[\s\S]{0,300}?aspectRatio/.test(src)],
+    ['页容器按该页真实比例占位', /aspectRatio: pageAspectFor\(store, page\)/.test(src)],
     ['显示缩放百分比', html.includes('200%')],
     ['右栏有缩放按钮', html.includes('>－<') && html.includes('>＋<')],
     ['顶栏有「适应窗口」按钮', html.includes('>适应<') && html.includes('整页适应当前窗口')],
@@ -1412,8 +1446,10 @@ try {
   ok('store 默认 autoCompile = false', bundle.__store.autoCompile === false)
 
   // 开关按钮：开/关两态都显式写 border（别混用 border 简写 + borderColor 长写）
-  ok('开关按钮用 toggleBtnStyle 统一两态（树/提纲/换行/自编 4 个）',
-    (src.match(/toggleBtnStyle\(store\./g) || []).length === 4
+  // 文件树 / 文件大纲 / 换行 / 自编 / 查找面板的 Aa、.* 一共 6 个，全部走同一个 helper
+  // （放大镜按钮不在顶栏、也不是「开/关」两态开关，它自己写全 searchFabOn/Off）
+  ok('开关按钮用 toggleBtnStyle 统一两态（文件树/文件大纲/换行/自编 + Aa、.* 6 个）',
+    (src.match(/toggleBtnStyle\(store\./g) || []).length === 6
     && src.includes('? { border: \'1px solid \' + C.accent, color: C.accent }')
     && src.includes(': { border: \'1px solid transparent\', color: C.text })'))
   ok('保存分体：整块自带边框（三角与文字同一圈框）',
@@ -2160,6 +2196,181 @@ try {
   for (const [label, passed] of wiring) passed ? ok(label) : bad(label)
 } catch (error) {
   bad('会话隔离测试抛错', String(error.message))
+}
+
+console.log('32) 查找 / 替换（照搬桌面版：两行面板 + Aa/.* + 环绕 + $1 展开）')
+try {
+  const store = bundle.__store
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const kernelSrc = readFileSync(new URL('../lib/vendor/entry.js', import.meta.url), 'utf8')
+
+  // 纯函数：正则构造（非正则模式必须转义，否则 `\ref{a}` 这种词会被当量词）
+  const plain = bundle.__buildSearchRegex('a.b', false, false)
+  const plainCase = bundle.__buildSearchRegex('a.b', false, true)
+  const asRegex = bundle.__buildSearchRegex('a.b', true, false)
+  const invalid = bundle.__buildSearchRegex('(', true, false)
+  const empty = bundle.__buildSearchRegex('', false, false)
+  const checks = [
+    ['非正则模式把 . 转义成字面量', plain instanceof RegExp && plain.source === 'a\\.b'],
+    ['默认忽略大小写（gi）', plain instanceof RegExp && plain.flags === 'gi'],
+    ['勾了 Aa 就区分大小写（g）', plainCase instanceof RegExp && plainCase.flags === 'g'],
+    ['正则模式原样编译', asRegex instanceof RegExp && asRegex.source === 'a.b'],
+    ['非法正则返回 null（面板显示 0 / 0，不抛错）', invalid === null],
+    ['空查询返回 null', empty === null]
+  ]
+  for (const [label, passed] of checks) passed ? ok(label) : bad(label)
+
+  // 命中扫描 + 零宽保护
+  const text = 'alpha ALPHA beta\n\\ref{a}\n'
+  const hits = bundle.__findSearchMatches(text, bundle.__buildSearchRegex('alpha', false, false))
+  hits.length === 2 && hits[0].from === 0 && hits[1].from === 6
+    ? ok('全文扫描给出全部命中（含大小写不同的）', `${hits.length} 处`)
+    : bad('命中扫描不对', JSON.stringify(hits))
+  const zeroWidth = bundle.__findSearchMatches('abc', bundle.__buildSearchRegex('x*', true, false))
+  zeroWidth.length <= 4
+    ? ok('零宽正则不会死循环（lastIndex++ 兜住）', `${zeroWidth.length} 处`)
+    : bad('零宽正则死循环了', String(zeroWidth.length))
+
+  // 当前序号 / 环绕步进
+  const at1 = bundle.__searchMatchIndex(hits, 2)
+  const miss = bundle.__searchMatchIndex(hits, 13)
+  at1 === 1 && miss === 0
+    ? ok('光标在命中里就认它（1 起），不在就 0')
+    : bad('当前命中判定不对', JSON.stringify({ at1, miss }))
+  const forward = bundle.__stepSearchMatch(hits, 0, 1)
+  const wrapForward = bundle.__stepSearchMatch(hits, 999, 1)
+  const backward = bundle.__stepSearchMatch(hits, 999, -1)
+  const wrapBackward = bundle.__stepSearchMatch(hits, 0, -1)
+  forward === 1 && wrapForward === 0 && backward === 1 && wrapBackward === 1
+    ? ok('下一个 / 上一个都环绕（到底回开头，到顶回末尾）', `${forward}/${wrapForward}/${backward}/${wrapBackward}`)
+    : bad('环绕步进不对', JSON.stringify({ forward, wrapForward, backward, wrapBackward }))
+
+  // 替换文本展开
+  const grouped = bundle.__findSearchMatches('x=12', bundle.__buildSearchRegex('(\\w+)=(\\d+)', true, false))
+  const expanded = bundle.__expandSearchReplace(grouped[0], '$2-$1', true)
+  const literal = bundle.__expandSearchReplace(grouped[0], '$2-$1', false)
+  const whole = bundle.__expandSearchReplace(grouped[0], '[$&]', true)
+  expanded === '12-x' && literal === '$2-$1' && whole === '[x=12]'
+    ? ok('正则替换展开 $1..$9 / $&，非正则原样', `${expanded} | ${whole}`)
+    : bad('替换展开不对', JSON.stringify({ expanded, literal, whole }))
+  const edits = bundle.__buildReplaceAllEdits(hits, 'X', false)
+  edits.length === 2 && edits[1].from === 6 && edits[1].insert === 'X'
+    ? ok('全部替换算成一批编辑（位置按原文档）', `${edits.length} 条`)
+    : bad('全部替换编辑不对', JSON.stringify(edits))
+
+  // 面板 UI：直接 SSR 出两行结构
+  store.searchOpen = true
+  store.searchReplaceOpen = true
+  store.searchQuery = 'alpha'
+  store.searchReplace = ''
+  store.searchCase = false
+  store.searchRegex = false
+  store.searchIndex = 1
+  store.searchNotice = ''
+  store.tabs = [{ id: 't-s', root: 'E:/p', rel: 'main.tex', name: 'main.tex', text, dirty: false }]
+  store.activeId = 't-s'
+  store.view = 'workbench'
+  store.pdfRel = ''
+  const html = ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
+  const panel = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(bundle.__SearchPanel, { store }))
+  const uiChecks = [
+    ['面板在工作台里渲染', html.includes('ml-search')],
+    ['查找输入框（placeholder 查找）', panel.includes('placeholder="查找"') && panel.includes('ml-search-input')],
+    ['替换输入框（placeholder 替换为）', panel.includes('placeholder="替换为"') && panel.includes('ml-search-replace')],
+    ['区分大小写按钮 Aa', panel.includes('>Aa<')],
+    ['正则按钮 .*', panel.includes('>.*<')],
+    ['计数按命中数显示', panel.includes('ml-search-count') && panel.includes('1 / 2')],
+    ['替换 / 全部 两个动作', panel.includes('>替换<') && panel.includes('>全部<')],
+    ['关闭按钮 ×', panel.includes('>×<')]
+  ]
+  for (const [label, passed] of uiChecks) passed ? ok(label) : bad(label)
+
+  // 关掉面板后不该再渲染（放大镜按钮 class 是 ml-search-fab，也算 ml-search 前缀，
+  // 所以这里只认浮层自己的 class 与输入框）
+  store.searchOpen = false
+  const closed = ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
+  !closed.includes('class="ml-search"') && !closed.includes('ml-search-input')
+    ? ok('关掉后浮层不再渲染（放大镜入口仍在）')
+    : bad('关掉后浮层还在')
+
+  // 接线：快捷键、桥、内核装饰层
+  const wiring = [
+    ['内核把 Mod-f / Mod-h 让给面板（不弹 CM 自带面板）',
+      kernelSrc.includes("key: 'Mod-f'") && kernelSrc.includes("options.onSearch('find')")
+      && kernelSrc.includes("key: 'Mod-h'") && kernelSrc.includes("options.onSearch('replace')")],
+    ['内核自带匹配着色层（不依赖 CM 搜索面板）',
+      kernelSrc.includes('setSearchMarksEffect') && kernelSrc.includes('searchMarkField')
+      && kernelSrc.includes('cm-searchMatch cm-searchMatch-selected')],
+    ['内核导出 selectRange / applyEdits / setSearchMarks',
+      kernelSrc.includes('selectRange,') && kernelSrc.includes('applyEdits,') && kernelSrc.includes('setSearchMarks')],
+    ['面板注册 onSearch（Ctrl+F 打开浮层）', src.includes('onSearch: function (mode) { openSearch(mode) }')],
+    ['编辑器桥转发选中/替换/上色',
+      src.includes('editorBridge.selectRange = function (from, to)')
+      && src.includes('editorBridge.applyEdits = function (edits, cursor)')
+      && src.includes('editorBridge.setSearchMarks = function (ranges, current)')],
+    ['回退编辑器也接 Ctrl+F / Ctrl+H', src.includes("openSearch('find')") && src.includes("openSearch('replace')")],
+    ['面板挂在编辑区（不是 CM 的 .cm-panels）',
+      src.includes('store.searchOpen ? h(SearchPanel, { store: store }) : null') && !src.includes('openSearchPanel(')],
+    ['查找状态不进会话隔离清单（属机器偏好）',
+      !bundle.__SESSION_FIELDS.includes('searchQuery') && !bundle.__SESSION_FIELDS.includes('searchOpen')],
+    // 用户 2026-11-15 提的两条：编辑区右上角要有放大镜入口；当前命中要看得出来
+    ['顶栏不再有「查找」按钮（已挪到编辑区右上角）',
+      !html.includes('>查找<') && !src.includes("}, '查找')")],
+    ['编辑区右上角有放大镜按钮（searchFab + 内联 SVG 圆+柄）',
+      html.includes('ml-search-fab')
+      && src.includes('h(\'circle\', { cx: 7, cy: 7, r: 4.5 })')
+      && src.includes("h('line', { x1: 10.5, y1: 10.5, x2: 14, y2: 14 })")],
+    ['放大镜两态写全 border + color（不靠删 borderColor）',
+      src.includes('searchFabOn: { border: \'1px solid \' + C.accent')
+      && src.includes('searchFabOff: { border: \'1px solid transparent\'')],
+    ['放大镜在浮层上方（top 6 vs 34，不叠在一起）',
+      /fabBar: \{[\s\S]{0,300}?top: 5/.test(src) && /searchPanel: \{[\s\S]{0,200}?top: 34/.test(src)],
+    // 用户 2026-11-15：「这俩功能底部加入悬浮矩形块，毛玻璃效果」（位置不变，只套毛玻璃块）
+    ['两颗图标套在同一个毛玻璃悬浮块里（ml-fab-bar）',
+      html.includes('ml-fab-bar') && html.includes('ml-comment-fab') && html.includes('ml-search-fab')],
+    ['毛玻璃：backdrop-filter 模糊 + 半透明底 + 圆角 + 阴影',
+      /fabBar: \{[\s\S]{0,600}?backdropFilter: 'blur\(10px\)/.test(src)
+      && /fabBar: \{[\s\S]{0,600}?WebkitBackdropFilter/.test(src)
+      && /fabBar: \{[\s\S]{0,600}?color-mix\(in srgb/.test(src)
+      && /fabBar: \{[\s\S]{0,600}?boxShadow:/.test(src)],
+    // 用户 2026-11-15：「tex顶部搜索按钮左边价格注释按钮，也是logo形式」
+    ['块内注释按钮排在放大镜左边（DOM 顺序）',
+      html.includes('ml-comment-fab') && html.indexOf('ml-comment-fab') < html.indexOf('ml-search-fab')],
+    ['注释按钮两态写全 border + color',
+      src.includes('commentFabOn: { border: \'1px solid \' + C.accent')
+      && src.includes('commentFabOff: { border: \'1px solid transparent\'')],
+    ['注释按钮加 % / 取消 %（全注释才反向）',
+      bundle.__buildCommentEdits('a\nb\n', 1, 2).length === 2
+      && bundle.__buildCommentEdits('a\nb\n', 1, 2)[0].insert === '%'
+      && bundle.__buildCommentEdits('%a\n%b\n', 1, 2).length === 2
+      && bundle.__buildCommentEdits('%a\n%b\n', 1, 2)[0].insert === ''
+      && bundle.__buildCommentEdits('%a\nb\n', 1, 2).length === 1],
+    ['注释跳过空行、保留缩进',
+      bundle.__buildCommentEdits('\n  a\n', 1, 2).length === 1
+      && bundle.__buildCommentEdits('\n  a\n', 1, 2)[0].from === 3],
+    ['内核接 F3 / Shift-F3 / Esc（桌面版也是 F3 下一个）',
+      kernelSrc.includes("key: 'F3'") && kernelSrc.includes("key: 'Shift-F3'")
+      && kernelSrc.includes("key: 'Escape'") && kernelSrc.includes('options.onSearchStep')],
+    ['面板注册 onSearchStep / onSearchEscape',
+      src.includes('onSearchStep: function (direction) { stepToSearchMatch(direction) }')
+      && src.includes('onSearchEscape: function ()')],
+    ['当前命中是红底、其余琥珀（看得出停在哪一条）',
+      kernelSrc.includes('rgba(239, 68, 68, 0.35)') && kernelSrc.includes('rgba(245, 158, 11, 0.35)')],
+    ['选中同词高亮加深并描边（原来 0.14 太淡）',
+      kernelSrc.includes('rgba(120, 170, 255, 0.30)') && /\.cm-selectionMatch[\s\S]{0,200}?outline/.test(kernelSrc)],
+    ['Ctrl+H 直接把焦点给替换框', src.includes("focusSearchField(mode === 'replace' ? 'replace' : 'find')")],
+    ['内核版本已加一（浏览器不会用旧缓存包）', bundle.__kernelAssetUrl().includes('v=10')]
+  ]
+  for (const [label, passed] of wiring) passed ? ok(label) : bad(label)
+
+  store.tabs = []
+  store.activeId = null
+  store.searchOpen = false
+  store.searchReplaceOpen = false
+  store.searchQuery = ''
+} catch (error) {
+  bad('查找 / 替换测试抛错', String(error.message))
 }
 
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)

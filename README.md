@@ -17,7 +17,7 @@ github:dichi123456/dsh-molingTex
 ### 指定版本（Release 安装包）
 
 ```
-plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v0.8.6/dsh-plugin-moling-latex-0.8.6.tgz
+plugin_manager install_bundle  https://github.com/dichi123456/dsh-molingTex/releases/download/v1.0.0/dsh-plugin-moling-latex-1.0.0.tgz
 ```
 
 ### 本地目录
@@ -49,7 +49,9 @@ plugin_manager install_bundle  <本仓库本地路径>
 
 **工作台**
 
-- 左侧 **CodeMirror 6** 编辑器：LaTeX 语法高亮（One Dark 配色）、行号（窄列，省地方）、软换行、多标签；`F5` 编译、`Ctrl+S` 保存、`Ctrl+F` 搜索；
+- 左侧 **CodeMirror 6** 编辑器：LaTeX 语法高亮（One Dark 配色）、行号（窄列，省地方）、软换行、多标签；`F5` 编译、`Ctrl+S` 保存、`Ctrl+F` 查找、`Ctrl+H` 替换、`F3` / `Shift+F3` 上下一个；
+- **查找 / 替换**（照搬桌面版墨灵TeX 的两行面板）：编辑区右上角毛玻璃悬浮块里两颗图标 —— **注释** 与 **放大镜**；放大镜点开查找面板（`Ctrl+F` / `Ctrl+H` 同效），面板内有查找框、`i / n` 计数、`Aa` 区分大小写、`.*` 正则、↑↓ 上下一个、`×` 关闭，第二行是替换框 + `替换` / `全部`；正则模式支持 `$1`–`$9` 与 `$&`。**所有命中涂琥珀色、当前命中涂红色**，选中相同词也会自动高亮；关掉面板高亮即清；
+- **注释按钮**：选中若干行点一下，行首加 `%`；选中的行**全都有 `%`** 时反向取消（连着一个空格一起删掉）；空行跳过，缩进保留；
 - **LaTeX 自动补全**（边打边弹，`Ctrl+Space` 手动唤出，`Tab` / `Enter` 选中，带占位符的项按 `Tab` 逐个跳字段）：
   - `\begin{` / `\end{` → 50 个常用环境；`\begin{figure` 会顺手补 `\end{figure}` 并把光标放在中间；
   - `\` 开头 → 100+ 常用命令（`\section` / `\textbf` / `\frac` / `\includegraphics` …），带参数的项直接是完整模板；
@@ -63,7 +65,7 @@ plugin_manager install_bundle  <本仓库本地路径>
 - `文件树`：浮层文件树（**连编译辅助文件 `.aux/.toc/.out/.bbl/.log` 等也列出来**，可直接点开看），右边框可拖，**宽度随内容自适应**；进项目时抽屉不自动展开，要看再点；`文件大纲`：章节列表点一条跳一行；
 - 底部状态栏：编译结果居中显示（成功绿 / 失败红），最右切换 `日志` / `PDF`。
 
-**PDF 预览**：逐页图片，轻量不卡；清晰度 72 / 96 / 144 三档，`Ctrl+滚轮` 以鼠标为锚点缩放（0.5×–3×），`适应` 一键整页贴合当前窗口；**页面直接紧贴分割线、不留黑边**（无内边距、无底色、无投影），页与页之间只留 8px；**单击页面跳回源码行**。面板内滚动条统一收成 8px 细圆角条，tex / pdf 交界处不再是一条粗灰边。
+**PDF 预览**：逐页图片，轻量不卡；清晰度 **48 / 72 / 96 / 144 四档（低 / 中 / 高 / 极）**，`Ctrl+滚轮` 以鼠标为锚点缩放（0.5×–3×），`适应` 一键整页贴合当前窗口；**页面直接紧贴分割线、不留黑边**（无内边距、无底色、无投影），页与页之间只留 8px；**页面比例按每一页自己的真实尺寸算**（A4 / beamer 4:3 / 16:9 都不会被拉变形，宿主用 `pdfinfo` 逐页读尺寸）；**单击页面跳回源码行**。面板内滚动条统一收成 8px 细圆角条，tex / pdf 交界处不再是一条粗灰边。
 
 **SyncTeX 双向定位**：编辑器右键「定位到 PDF 位置」→ 源码行跳到 PDF 对应页并画黄圈；PDF 上单击 → 跳回源码行（**文件树/提纲等浮层会自动收起，目标行闪一下绿**，不会"跳了却看不出来"）；结果显示在底部状态栏，失败也一定会说明原因。
 
@@ -83,6 +85,11 @@ plugin_manager install_bundle  <本仓库本地路径>
 | `latex_outline` | 章节标题与行号、`\input`/`\include` 依赖、`\label`/`\cite` 计数 |
 
 引擎缺省 `auto`：`ctex`/中文 → `xelatex`；`IEEEtran`/`elsarticle`/`article` → `pdflatex`。
+
+**两套入口不会打架**（v1.0.0）：
+
+- **同一份文档的编译排队**：面板按钮、面板「自编」、Agent 的 `latex_compile` 都走同一个队列（按「目录 + 主文件名」串行），不会再有两个进程同时写同一批 `.aux` / `.log` / `.pdf`；
+- **工具沿用面板档位**：Agent 调 `latex_compile` 时如果**没有显式传** `mode` / `engine`，而这份文件正是面板上次编译的那一份，就沿用面板的档位（比如面板选了「快速 / xelatex」，工具也用快速 / xelatex），不会出现一边 pdflatex 一边 xelatex 把 `.aux` 写坏、只能清辅助文件才能恢复的情况。要强制另一套，显式传 `mode` / `engine` 即可。
 
 ## 排错
 

@@ -130,6 +130,13 @@ console.log('5) 编译 → PDF → 清理')
     const value = compile.json.value
     ok('compile', `${value.engine} / ${(value.durationMs / 1000).toFixed(1)}s`)
 
+    // 面板编过之后要把档位记下来：工具侧 latex_compile 缺省参数时沿用它，
+    // 否则两边一个 quick 一个 full、一个 xelatex 一个 pdflatex 会互相污染 aux。
+    const remembered = handler.core.lastCompileOf()
+    remembered && remembered.mode === 'quick' && remembered.file.endsWith('hello-en.tex')
+      ? ok('记住面板本次编译档位（工具缺省时沿用）', `${remembered.mode} / ${remembered.engine}`)
+      : bad('未记住面板编译档位', JSON.stringify(remembered))
+
     // 编译辅助文件也要出现在文件树里（之前只认 .tex/.bib/.md/.pdf，用户以为插件失灵）
     const auxTree = await call('POST', 'tree', { root: fixtures })
     const auxList = auxTree.json && auxTree.json.ok ? auxTree.json.value.files.map((file) => file.rel) : []
@@ -148,6 +155,15 @@ console.log('5) 编译 → PDF → 清理')
       info.pages >= 1 && !('base64' in info)
         ? ok('pdf meta 只回元信息', `${info.pages} 页 / raster=${info.raster}`)
         : bad('pdf meta 内容不对', JSON.stringify(Object.keys(info)))
+      // 逐页尺寸：幻灯片 4:3 / 16:9、论文里插横版大图，每页长宽比都可能不同。
+      // 只给首页尺寸时前端会把所有页当 A4 占位 → 非 A4 页被纵向拉伸（用户报的幻灯片问题）。
+      const sizes = info.pageSizes
+      Array.isArray(sizes) && sizes.length === info.pages && sizes[0] && sizes[0].width > 0 && sizes[0].height > 0
+        ? ok('pdf meta 给出逐页尺寸（幻灯片/横页靠它算比例）', `${sizes.length} 页 · 首页 ${sizes[0].width}×${sizes[0].height}pt`)
+        : bad('逐页尺寸缺失', JSON.stringify(sizes).slice(0, 140))
+      info.pageSize && sizes && sizes[0] && info.pageSize.width === sizes[0].width
+        ? ok('首页尺寸与逐页尺寸一致')
+        : bad('首页尺寸与逐页尺寸不一致', JSON.stringify(info.pageSize) + ' vs ' + JSON.stringify(sizes && sizes[0]))
     }
 
     // 单页栅格化：GET + 二进制 PNG；dpi 越低字节越少（这就是"降分辨率"的实际效果）

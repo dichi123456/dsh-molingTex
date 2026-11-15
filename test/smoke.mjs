@@ -118,7 +118,32 @@ try {
   bad('latex_compile 抛错', String(error.message))
 }
 
-console.log('6) latex_compile（失败路径：错误必须带 file:line）')
+console.log('6) 同一份文档并发编译被串行化（面板与工具不会互相踩 aux）')
+try {
+  const { compileDocument } = await import('../lib/latex.js')
+  const scratch = mkdtempSync(join(tmpdir(), 'latex-tools-lock-'))
+  const doc = join(scratch, 'locked.tex')
+  writeFileSync(doc, [
+    '\\documentclass{article}',
+    '\\begin{document}',
+    'serialized',
+    '\\end{document}',
+    ''
+  ].join('\n'))
+  // 两趟同时发起：没排队时两个引擎会抢同一批 aux，后写的那趟读到半截文件。
+  const [a, b] = await Promise.all([
+    compileDocument({ filePath: doc, mode: 'quick' }),
+    compileDocument({ filePath: doc, mode: 'quick' })
+  ])
+  a.success && b.success
+    ? ok('并发两趟都编译成功（按主文件名串行）', `${(a.durationMs / 1000).toFixed(1)}s + ${(b.durationMs / 1000).toFixed(1)}s`)
+    : bad('并发编译失败', `${a.success}/${b.success} ${(a.errors[0] || {}).message || ''}`)
+  rmSync(scratch, { recursive: true, force: true })
+} catch (error) {
+  bad('并发编译抛错', String(error.message))
+}
+
+console.log('7) latex_compile（失败路径：错误必须带 file:line）')
 try {
   const scratch = mkdtempSync(join(tmpdir(), 'latex-tools-smoke-'))
   const broken = join(scratch, 'broken.tex')
@@ -140,7 +165,7 @@ try {
   bad('失败路径抛错', String(error.message))
 }
 
-console.log('7) 工具相对路径不依赖会话 cwd（墨灵打开的项目优先）')
+console.log('8) 工具相对路径不依赖会话 cwd（墨灵打开的项目优先）')
 try {
   // 用户切到别的对话框项目时，墨灵面板仍开着 fixtures 这个项目：
   // `latex_outline({file:'hello-en.tex'})` 必须还能找到，而不是按会话 cwd 报文件不存在。
@@ -169,7 +194,7 @@ try {
 }
 
 if (fullMode) {
-  console.log('8) latex_compile（full）')
+  console.log('9) latex_compile（full）')
   try {
     const { value, rendered } = await call('latex_compile', { file: join(fixtures, 'hello-en.tex'), mode: 'full' })
     console.log(rendered.split('\n').slice(0, 10).map((line) => `     ${line}`).join('\n'))
@@ -178,7 +203,7 @@ if (fullMode) {
     bad('full 编译抛错', String(error.message))
   }
 
-  console.log('9) latex_compile（中文 / xelatex）')
+  console.log('10) latex_compile（中文 / xelatex）')
   try {
     const { value, rendered } = await call('latex_compile', { file: join(fixtures, 'hello-zh.tex'), mode: 'full' })
     console.log(rendered.split('\n').slice(0, 10).map((line) => `     ${line}`).join('\n'))
@@ -188,7 +213,7 @@ if (fullMode) {
     bad('中文编译抛错', String(error.message))
   }
 
-  console.log('10) latex_synctex（forward）')
+  console.log('11) latex_synctex（forward）')
   try {
     const { value, rendered } = await call('latex_synctex', {
       direction: 'forward',
@@ -202,7 +227,7 @@ if (fullMode) {
     bad('latex_synctex 抛错', String(error.message))
   }
 
-  console.log('11) latex_clean')
+  console.log('12) latex_clean')
   try {
     const { value, rendered } = await call('latex_clean', { file: join(fixtures, 'hello-en.tex') })
     console.log(`     ${rendered.split('\n')[0]}`)
