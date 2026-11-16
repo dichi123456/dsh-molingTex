@@ -20,6 +20,7 @@ test/fixtures/*.snm
 test/fixtures/*.vrb
 test/fixtures/*.bcf
 test/fixtures/*.run.xml
+test/fixtures/*.xdv
 
 # 自测留下的探针文件
 test/fixtures/live-probe.md

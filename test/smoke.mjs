@@ -7,7 +7,7 @@
  * 退出码非 0 表示失败，便于人工回归。
  * 注意：本文件含中文，别用 PowerShell 的 Get-Content/Set-Content 往返改写（会变乱码）。
  */
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -213,7 +213,21 @@ if (fullMode) {
     bad('中文编译抛错', String(error.message))
   }
 
-  console.log('11) latex_synctex（forward）')
+  console.log('11) latex_compile（once 单趟编译）')
+  try {
+    // 用户 2026-11-16 要求：「新增一个只编译一次，带图的编译方式」（后去掉「带图」字样）
+    // once = 一趟完整排版（不 draft，图片照常插入），不跑 bibtex、不补趟
+    const { value, rendered } = await call('latex_compile', { file: join(fixtures, 'hello-en.tex'), mode: 'once' })
+    console.log(rendered.split('\n').slice(0, 10).map((line) => `     ${line}`).join('\n'))
+    value.success ? ok('once 编译成功', `${value.passes} 趟 / ${(value.durationMs / 1000).toFixed(1)}s`) : bad('once 编译失败')
+    value.passes <= 2 ? ok('once 只排版一趟（最多多一次 PDF 后端）', `passes=${value.passes}`) : bad('once 跑了多趟', `passes=${value.passes}`)
+    const noBib = !value.bibtex || value.bibtex.ran === false
+    noBib ? ok('once 不跑 bibtex') : bad('once 竟然跑了 bibtex')
+  } catch (error) {
+    bad('once 编译抛错', String(error.message))
+  }
+
+  console.log('12) latex_synctex（forward）')
   try {
     const { value, rendered } = await call('latex_synctex', {
       direction: 'forward',
@@ -227,7 +241,7 @@ if (fullMode) {
     bad('latex_synctex 抛错', String(error.message))
   }
 
-  console.log('12) latex_clean')
+  console.log('13) latex_clean')
   try {
     const { value, rendered } = await call('latex_clean', { file: join(fixtures, 'hello-en.tex') })
     console.log(`     ${rendered.split('\n')[0]}`)
@@ -235,6 +249,114 @@ if (fullMode) {
     existsSync(join(fixtures, 'hello-en.tex')) ? ok('未误删 .tex') : bad('.tex 被删除')
   } catch (error) {
     bad('latex_clean 抛错', String(error.message))
+  }
+
+  console.log('14) 日志解析：带 file:line 的警告不能被当成错误')
+  try {
+    const { parseLog } = await import('../lib/latex.js')
+    // -file-line-error 下警告也是「文件:行: 内容」格式，以前一律进 errors
+    // → 面板报「编译失败 · N 条」而 PDF 明明成功（用户 2026-11-16 报）
+    const log = [
+      './main.tex:12: Package hyperref Warning: Token not allowed in a PDF string (Unicode):',
+      './main.tex:274: Underfull \\hbox (badness 10000) in paragraph at lines 274--274',
+      './main.tex:5: LaTeX Warning: Reference `fig1\' on page 1 undefined on input line 5.',
+      './main.tex:88: ! Undefined control sequence.',
+      '\\badmacro ->\\foo',
+      'l.88 \\badmacro'
+    ].join('\n')
+    const parsed = parseLog(log, 'E:\\proj\\main.tex')
+    parsed.errors.length === 1 && /Undefined control sequence/.test(parsed.errors[0].message)
+      ? ok('只有真错误进 errors', `${parsed.errors.length} 条错误`)
+      : bad('警告被当成错误了', JSON.stringify(parsed.errors.map((e) => e.message)))
+    parsed.warnings.length === 3
+      ? ok('三条警告都归到 warnings（hyperref / Underfull / LaTeX Warning）', `${parsed.warnings.length} 条`)
+      : bad('警告数量不对', JSON.stringify(parsed.warnings.map((w) => w.message)))
+    parsed.warnings[0].line === 12 && parsed.errors[0].line === 88
+      ? ok('警告与错误都保留行号（可点击跳转）')
+      : bad('行号丢了', JSON.stringify(parsed.warnings[0]))
+  } catch (error) {
+    bad('日志解析测试抛错', String(error.message))
+  }
+
+  console.log('15) 编译失败兜底：PDF 后端崩了要给可读原因，不能只说「编译失败」')
+  try {
+    const { parseLog, pdfBackendFatal, PDF_BACKEND_RETRIES } = await import('../lib/latex.js')
+    // 用户 m05857 的真实症状：exit≠0、.log 里零 LaTeX 错误、只显示「编译失败」
+    pdfBackendFatal('xdvipdfmx:fatal: pdf_link_obj(): passed invalid object.')
+      === 'PDF 写出失败（xdvipdfmx）：pdf_link_obj(): passed invalid object.'
+      ? ok('识别 xdvipdfmx fatal 并给出原文')
+      : bad('xdvipdfmx fatal 没被识别', String(pdfBackendFatal('xdvipdfmx:fatal: pdf_link_obj(): passed invalid object.')))
+    const noOutput = pdfBackendFatal('No output PDF file written.')
+    noOutput !== null && noOutput.indexOf('No output PDF file written') >= 0
+      ? ok('识别「没有生成输出文件」')
+      : bad('No output PDF file written 没被识别', String(noOutput))
+    pdfBackendFatal('fwrite: Broken pipe') !== null
+      ? ok('识别管道中断（fwrite: Broken pipe）')
+      : bad('Broken pipe 没被识别')
+    pdfBackendFatal('This is just a normal log\nwith nothing wrong') === null
+      ? ok('普通日志不误判为后端故障')
+      : bad('普通日志被误判了')
+    PDF_BACKEND_RETRIES === 2
+      ? ok('自动重跑上限是 2 趟（不是死循环）')
+      : bad('PDF_BACKEND_RETRIES 不是 2', String(PDF_BACKEND_RETRIES))
+    // 排版本身成功、只是 PDF 后端崩：日志里确实没有 LaTeX 错误
+    parseLog('xdvipdfmx:fatal: pdf_link_obj(): passed invalid object.\nNo output PDF file written.', 'E:\\proj\\main.tex').errors.length === 0
+      ? ok('PDF 后端故障不会被 parseLog 误记成 LaTeX 错误（由兜底单独给原因）')
+      : bad('后端故障被 parseLog 当成了 LaTeX 错误')
+    const src = readFileSync(new URL('../lib/latex.js', import.meta.url), 'utf8')
+    const hasFallback = src.indexOf('if (!success && !parsed.errors.length && !aborted') >= 0
+    hasFallback
+      ? ok('exit≠0 且无错误条目时补兜底 error')
+      : bad('缺失败兜底分支')
+    const hasRetry = src.indexOf('pdfRetries += 1') >= 0 && src.indexOf('while (attempt < PDF_BACKEND_RETRIES)') >= 0
+    hasRetry
+      ? ok('重试循环接线（attempt 计数 + 上限）')
+      : bad('重试循环没接线')
+    const guarded = src.indexOf('parseLog(lastLog, filePath).errors.length) break') >= 0
+    guarded
+      ? ok('重试只针对「没有 LaTeX 错误」的失败，真错误不重跑')
+      : bad('重试条件缺「无 LaTeX 错误」保护')
+
+    // 提速改造（m06257）：中间趟只排版不写 PDF，最后单独调一次 xdvipdfmx
+    const noPdfFlag = src.indexOf("const noPdfIntermediate = engine === 'xelatex' && mode !== 'quick'") >= 0
+    noPdfFlag
+      ? ok('中间趟 -no-pdf 只对 xelatex 且非 quick 生效（pdflatex 不受影响）')
+      : bad('缺 noPdfIntermediate 判定')
+    const noPdfArgs = src.indexOf("if (noPdfIntermediate) args = ['-no-pdf', ...args]") >= 0
+    noPdfArgs
+      ? ok('中间趟参数真的带上 -no-pdf')
+      : bad('-no-pdf 没接进 args')
+    const hasBackend = src.indexOf('const runPdfBackend = async () => {') >= 0
+      && src.indexOf("const args = ['-q', `${base}.xdv`]") >= 0
+    hasBackend
+      ? ok('最后单独调一次 xdvipdfmx 写 PDF（复用同一份 .xdv）')
+      : bad('缺 runPdfBackend 或它的参数')
+    const backendGuarded = src.indexOf('if (!aborted && noPdfIntermediate) {') >= 0
+      && src.indexOf('const backend = await runPdfBackend()') >= 0
+    backendGuarded
+      ? ok('写 PDF 那一步也受 noPdfIntermediate 保护（不会对 pdflatex 跑 xdvipdfmx）')
+      : bad('runPdfBackend 调用没被 noPdfIntermediate 包住')
+    const typesetOnly = src.indexOf("passes.filter((item) => item.backend !== 'xdvipdfmx')") >= 0
+      && src.indexOf('lastTypeset.code === undefined || lastTypeset.code === 0') >= 0
+    typesetOnly
+      ? ok('成败看最后一趟排版，写 PDF 那趟单独算（否则会被后端故障判死）')
+      : bad('success 判定没排除 xdvipdfmx 那一趟')
+    // 新增「单趟编译」模式：只跑一趟完整排版，不 draft、不跑 bibtex、不补趟
+    const onceBranch = src.indexOf("} else if (mode === 'once') {") >= 0
+    onceBranch
+      ? ok('latex.js 有 once 分支（单趟编译）')
+      : bad('缺 once 分支')
+    const onceNoDraft = src.indexOf("const first = await runEngine(false)\n    aborted = first.aborted\n    if (!aborted && noPdfIntermediate) {") >= 0
+    onceNoDraft
+      ? ok('once 用完整排版（runEngine(false)，图片照常插入）')
+      : bad('once 走了 draft 或没接 PDF 后端')
+    const onceNoBib = /else if \(mode === 'once'\) \{[\s\S]{0,400}?\n  \} else \{/.test(src)
+      && !/else if \(mode === 'once'\) \{[\s\S]{0,400}?runBibtex/.test(src)
+    onceNoBib
+      ? ok('once 不跑 bibtex（省一趟等待）')
+      : bad('once 分支里跑了 bibtex')
+  } catch (error) {
+    bad('编译失败兜底测试抛错', String(error.message))
   }
 
   // 中文用例与生成的 PDF 一并收尾，让 fixtures 里只剩 .tex

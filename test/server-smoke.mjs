@@ -121,6 +121,74 @@ console.log('4) 读写文件')
   notTex.status >= 400 ? ok('outline 拒绝非 tex') : bad('outline 非 tex 未拒')
 }
 
+console.log('4b) 全项目搜索 / .bib 文献条目')
+{
+  const found = await call('POST', 'search', { root: fixtures, query: 'Introduction' })
+  const value = found.json && found.json.ok ? found.json.value : null
+  const hit = value && value.matches.find((item) => item.rel === 'hello-en.tex')
+  hit && hit.line === 12
+    ? ok('search 找到命中并给出文件/行/列', `${value.matches.length} 处 / 行 ${hit.line} 列 ${hit.col}`)
+    : bad('search 命中', JSON.stringify(found.json).slice(0, 200))
+  hit && hit.text.includes('Introduction') && hit.from >= 0 && hit.to > hit.from
+    ? ok('search 命中带行原文与区间（面板做高亮用）')
+    : bad('search 命中字段不全')
+
+  // 大小写：默认不敏感，显式 caseSensitive 才敏感
+  const loose = await call('POST', 'search', { root: fixtures, query: 'introduction' })
+  const strict = await call('POST', 'search', { root: fixtures, query: 'introduction', caseSensitive: true })
+  loose.json.value.matches.length > 0 && strict.json.value.matches.length === 0
+    ? ok('search 默认忽略大小写、caseSensitive 后区分')
+    : bad('search 大小写行为不对', `loose=${loose.json.value.matches.length} strict=${strict.json.value.matches.length}`)
+
+  // 正则：关掉时 `\ref` 里的反斜杠按字面找（转义正确，不会变成非法正则）
+  const literal = await call('POST', 'search', { root: fixtures, query: '\\ref{sec:intro}' })
+  literal.json && literal.json.ok && literal.json.value.matches.length >= 1
+    ? ok('search 非正则模式下特殊字符按字面处理')
+    : bad('search 字面模式', JSON.stringify(literal.json).slice(0, 160))
+
+  const regex = await call('POST', 'search', { root: fixtures, query: 'sec:(intro|concl)', regex: true })
+  regex.json && regex.json.ok && regex.json.value.matches.length >= 1
+    ? ok('search 支持正则')
+    : bad('search 正则', JSON.stringify(regex.json).slice(0, 160))
+
+  const broken = await call('POST', 'search', { root: fixtures, query: 'a(', regex: true })
+  broken.json && broken.json.ok === false
+    ? ok('search 拒绝非法正则（不把宿主拖死）')
+    : bad('search 非法正则未拒')
+
+  const empty = await call('POST', 'search', { root: fixtures, query: '' })
+  empty.json && empty.json.ok === false ? ok('search 拒绝空查询') : bad('search 空查询未拒')
+
+  // 编译产物默认不搜（否则搜 \ref 会被 .aux 淹没）
+  writeFileSync(join(fixtures, 'aux-noise.aux'), '\\ref{sec:intro}\n', 'utf8')
+  try {
+    const skipAux = await call('POST', 'search', { root: fixtures, query: 'sec:intro' })
+    const withAux = await call('POST', 'search', { root: fixtures, query: 'sec:intro', includeAux: true })
+    const skipHas = skipAux.json.value.matches.some((item) => item.rel === 'aux-noise.aux')
+    const withHas = withAux.json.value.matches.some((item) => item.rel === 'aux-noise.aux')
+    !skipHas && withHas
+      ? ok('search 默认跳过 .aux，includeAux 才带上')
+      : bad('search 编译产物过滤不对', `skip=${skipHas} with=${withHas}`)
+  } finally {
+    try { rmSync(join(fixtures, 'aux-noise.aux')) } catch { /* 忽略 */ }
+  }
+
+  // .bib 条目：给 \cite{ 补全用
+  const bib = await call('POST', 'bib', { root: fixtures })
+  const entries = bib.json && bib.json.ok ? bib.json.value.entries : []
+  const knuth = entries.find((item) => item.key === 'knuth1984')
+  const lamport = entries.find((item) => item.key === 'lamport1994')
+  knuth && lamport
+    ? ok('bib 列出文献 key', `${entries.length} 条`)
+    : bad('bib 条目', JSON.stringify(bib.json).slice(0, 200))
+  knuth && knuth.title === 'Literate Programming' && knuth.year === '1984' && knuth.file === 'refs.bib'
+    ? ok('bib 带 title/year/来源文件（补全弹窗做副标题）')
+    : bad('bib 字段不全', JSON.stringify(knuth))
+  !entries.some((item) => item.key === 'this')
+    ? ok('bib 忽略 @comment')
+    : bad('bib 把 @comment 当条目了')
+}
+
 console.log('5) 编译 → PDF → 清理')
 {
   const compile = await call('POST', 'compile', { root: fixtures, file: 'hello-en.tex', mode: 'quick' })

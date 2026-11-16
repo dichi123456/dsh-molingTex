@@ -403,7 +403,6 @@ try {
   store.pdfRev = '1712345678'
   store.pdfPages = 3
   store.pdfRaster = true
-  store.pdfDpi = 96
   store.pdfUrl = ''   // 走图片预览时不需要 blob
 
   const html = render()
@@ -415,7 +414,12 @@ try {
     ['带 mtime 版本号（可长期缓存）', pageUrl.includes('v=1712345678')],
     ['首屏立即加载、其余懒加载', /loading="eager"/.test(html) && /loading="lazy"/.test(html)],
     ['不再用 iframe 预览', !/<iframe/.test(html)],
-    ['清晰度四档 48/72/96/144', bundle.__DPI_CHOICES.map((choice) => choice.value).join() === '48,72,96,144'],
+    ['dpi 固定 96（不再给用户选）', bundle.__PDF_DPI === 96],
+    // 清晰度只作用于「预览栅格化」：编译请求里不能出现 dpi，
+    // 否则会让人以为编译产物被降质（用户 2026-11-16 问过这件事）。
+    ['编译请求不带 dpi（产物始终是矢量 PDF）', !/api\('compile',\s*\{[^}]*dpi/.test(src)],
+    ['dpi 只用于预览图片地址', src.includes("'&dpi=' + PDF_DPI")],
+    ['PDF 顶栏不再有清晰度下拉', !html.includes('预览清晰度：') && !html.includes('极')],
     ['按加载前占位比例（防跳动）', /aspect-ratio:595\.276 \/ 841\.89/.test(html) || /aspect-ratio:595\.276\/841\.89/.test(html)]
   ]
   for (const [label, passed] of checks) passed ? ok(label) : bad(label)
@@ -570,7 +574,6 @@ try {
   store.pdfRev = '99'
   store.pdfPages = 2
   store.pdfRaster = true
-  store.pdfDpi = 96
   store.pdfZoom = 2
   store.syncMark = { page: 1, x: 100, y: 200 }
   store.pdfPageSize = { width: 595.276, height: 841.89 }
@@ -644,8 +647,8 @@ try {
     ['右侧是小三角', html.includes('>▾<')],
     ['编译按钮贴着四字标签（86px 且不换行）', html.includes('width:86px') && html.includes('white-space:nowrap')],
     ['下拉与按钮等宽、左右边对齐', compileMenuHtml.includes('position:absolute;top:100%;left:0;right:0')],
-    ['展开后有三种方式', compileMenuHtml.includes('完整编译') && compileMenuHtml.includes('快速编译') && compileMenuHtml.includes('从头编译')],
-    ['按钮上显示当前编译方式', html.includes('>完整编译<') || html.includes('>快速编译<') || html.includes('>从头编译<')],
+    ['展开后有四种方式', compileMenuHtml.includes('完整编译') && compileMenuHtml.includes('单趟编译') && compileMenuHtml.includes('无图编译') && compileMenuHtml.includes('从头编译')],
+    ['按钮上显示当前编译方式', html.includes('>完整编译<') || html.includes('>单趟编译<') || html.includes('>无图编译<') || html.includes('>从头编译<')],
     ['右键菜单默认不显示', !html.includes('定位到 PDF 位置')],
     ['缩放到 200% 时页面宽度翻倍', html.includes('width:200.00%')],
     ['页面容器不再被 maxWidth:100% 卡死（放大可超出窗口、可横向拖动）',
@@ -670,7 +673,7 @@ try {
     ['定位环渲染在页面上', html.includes('border-radius:50%')],
     ['定位环按页面尺寸换算百分比', percent(100, 595.276) === '16.799%' && percent(200, 841.89) === '23.756%'],
     ['页面可点击定位（crosshair 光标）', html.includes('crosshair')],
-    ['编译方式常量是三档', bundle.__COMPILE_MODES.map((x) => x[0]).join() === 'full,quick,clean']
+    ['编译方式常量是四档', bundle.__COMPILE_MODES.map((x) => x[0]).join() === 'full,once,quick,clean']
   ]
   for (const [label, passed] of checks) passed ? ok(label) : bad(label, label.includes('百分比') ? String(percent(100, 595.276)) : '')
 
@@ -1352,6 +1355,33 @@ try {
     && /flashLine: line, flashAt: Date\.now\(\)/.test(src))
   ok('CM 与回退编辑器都会闪目标行（两个 flashAt effect）',
     (src.match(/\}, \[store\.flashAt\]\)/g) || []).length === 2)
+
+  // 编译错误跨文件跳转：日志里的 file 五花八门，先归一成项目内相对路径
+  const logFiles = [
+    { rel: 'main.tex' },
+    { rel: 'chapters/intro.tex' },
+    { rel: 'chapters/method.tex' },
+    { rel: 'refs.bib' }
+  ]
+  const toRel = bundle.__logFileToRel
+  ok('日志路径：./ 前缀 → 相对路径', toRel('./chapters/intro.tex', 'C:\\proj', logFiles) === 'chapters/intro.tex')
+  ok('日志路径：项目内绝对路径 → 相对路径',
+    toRel('C:\\proj\\chapters\\method.tex', 'C:\\proj', logFiles) === 'chapters/method.tex')
+  ok('日志路径：反斜杠相对路径也能认', toRel('chapters\\intro.tex', 'C:\\proj', logFiles) === 'chapters/intro.tex')
+  ok('日志路径：只给文件名、清单里唯一 → 认它', toRel('refs.bib', 'C:\\proj', logFiles) === 'refs.bib')
+  ok('日志路径：项目外的绝对路径 → null（不硬塞进项目）',
+    toRel('C:\\texlive\\2024\\texmf-dist\\tex\\latex\\base\\latex.ltx', 'C:\\proj', logFiles) === null)
+  ok('日志路径：同名文件不止一个 → null（不猜）',
+    toRel('intro.tex', 'C:\\proj', [{ rel: 'a/intro.tex' }, { rel: 'b/intro.tex' }]) === null)
+  ok('日志路径：空值 → null', toRel('', 'C:\\proj', logFiles) === null && toRel(null, 'C:\\proj', logFiles) === null)
+  ok('LogPane 把 issue.file 一起交给 onJump（否则子文件错误会跳到当前文件）',
+    /props\.onJump\(issue\.line, issue\.file\)/.test(src))
+  ok('jumpTo 跨文件：先 openTab 再跳（等编辑器挂上）',
+    /openTab\(state\.root, rel\)\.then\(function \(\) \{[\s\S]{0,120}?editorBridge\.jumpTo\(line\)/.test(src))
+  // 多趟编译的结果只取最后一趟，日志头要写清「几趟」并给错误/警告计数
+  //（用户 2026-11-16 报：完整编译中间趟的页面被当成最终结果，容易误解）
+  ok('日志头标注「结果取最后一趟」（趟数 > 1 时）', /passes > 1 \? '（结果取最后一趟）'/.test(src))
+  ok('日志头给出错误/警告条数', /条错误 · ' \+ \(log\.warnings \|\| \[\]\)\.length \+ ' 条警告/.test(src))
 } catch (error) {
   bad('视口/行号测试抛错', String(error.message))
 }
@@ -1459,10 +1489,11 @@ try {
   ok('store 默认 autoCompile = false', bundle.__store.autoCompile === false)
 
   // 开关按钮：开/关两态都显式写 border（别混用 border 简写 + borderColor 长写）
-  // 文件树 / 文件大纲 / 换行 / 自编 / 查找面板的 Aa、.* 一共 6 个，全部走同一个 helper
+  // 文件树 / 文件大纲 / 换行 / 自编 / 查找面板的 Aa、.* / 全项目搜索的 Aa、.*
+  // 一共 8 个，全部走同一个 helper
   // （放大镜按钮不在顶栏、也不是「开/关」两态开关，它自己写全 searchFabOn/Off）
-  ok('开关按钮用 toggleBtnStyle 统一两态（文件树/文件大纲/换行/自编 + Aa、.* 6 个）',
-    (src.match(/toggleBtnStyle\(store\./g) || []).length === 6
+  ok('开关按钮用 toggleBtnStyle 统一两态（文件树/文件大纲/换行/自编 + Aa、.* 各两组 8 个）',
+    (src.match(/toggleBtnStyle\(store\./g) || []).length === 8
     && src.includes('? { border: \'1px solid \' + C.accent, color: C.accent }')
     && src.includes(': { border: \'1px solid transparent\', color: C.text })'))
   ok('保存分体：整块自带边框（三角与文字同一圈框）',
@@ -2373,7 +2404,7 @@ try {
     ['选中同词高亮加深并描边（原来 0.14 太淡）',
       kernelSrc.includes('rgba(120, 170, 255, 0.30)') && /\.cm-selectionMatch[\s\S]{0,200}?outline/.test(kernelSrc)],
     ['Ctrl+H 直接把焦点给替换框', src.includes("focusSearchField(mode === 'replace' ? 'replace' : 'find')")],
-    ['内核版本已加一（浏览器不会用旧缓存包）', bundle.__kernelAssetUrl().includes('v=10')]
+    ['内核版本已加一（浏览器不会用旧缓存包）', bundle.__kernelAssetUrl().includes('v=12')]
   ]
   for (const [label, passed] of wiring) passed ? ok(label) : bad(label)
 
@@ -2384,6 +2415,151 @@ try {
   store.searchQuery = ''
 } catch (error) {
   bad('查找 / 替换测试抛错', String(error.message))
+}
+
+console.log('33) 全项目搜索 / .bib 补全 / 代码折叠（用户 2026-11-16 四项需求的后三项）')
+try {
+  const store = bundle.__store
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const kernelSrc = readFileSync(new URL('../lib/vendor/entry.js', import.meta.url), 'utf8')
+
+  // 分组：按文件归拢、组内按行号升序、文件顺序跟着宿主给的顺序
+  const grouped = bundle.__groupSearchMatches([
+    { rel: 'b.tex', line: 9, col: 1, text: 'x', from: 0, to: 1 },
+    { rel: 'a.tex', line: 4, col: 3, text: 'y', from: 0, to: 1 },
+    { rel: 'b.tex', line: 2, col: 1, text: 'z', from: 0, to: 1 }
+  ])
+  grouped.length === 2 && grouped[0].rel === 'b.tex' && grouped[0].matches.length === 2
+    ? ok('命中按文件分组（保序）', grouped.map((g) => g.rel).join(','))
+    : bad('分组不对', JSON.stringify(grouped.map((g) => g.rel)))
+  grouped[0].matches[0].line === 2 && grouped[0].matches[1].line === 9
+    ? ok('组内按行号升序', grouped[0].matches.map((m) => m.line).join(','))
+    : bad('组内顺序不对', JSON.stringify(grouped[0].matches.map((m) => m.line)))
+  grouped[0].name === 'b.tex' && bundle.__groupSearchMatches(null).length === 0
+    ? ok('组名取文件名、空输入给空数组')
+    : bad('组名/空输入处理不对')
+
+  // 搜索请求：打宿主 search 端点，带上 caseSensitive / regex 两个开关
+  const realFetch = globalThis.fetch
+  let seen = null
+  globalThis.fetch = async (url, opts) => {
+    const endpoint = String(url).split('/').pop()
+    const body = opts && opts.body ? JSON.parse(opts.body) : {}
+    if (endpoint === 'search') {
+      seen = body
+      return { ok: true, status: 200, json: async () => ({ ok: true, value: { matches: [{ rel: 'a.tex', line: 3, col: 2, text: 'hit', from: 0, to: 3 }], truncated: false } }) }
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true, value: {} }) }
+  }
+  Object.assign(store, {
+    root: 'E:\\proj-search', projSearchQuery: 'hit', projSearchCase: true,
+    projSearchRegex: false, projSearchResult: null, projSearchNotice: '', projSearchBusy: ''
+  })
+  await bundle.__runProjectSearch()
+  seen && seen.query === 'hit' && seen.caseSensitive === true && seen.regex === false && seen.root === 'E:\\proj-search'
+    ? ok('全项目搜索打 search 端点并带齐参数', JSON.stringify(seen))
+    : bad('search 请求参数不对', JSON.stringify(seen))
+  store.projSearchResult && store.projSearchResult.matches.length === 1 && store.projSearchBusy === ''
+    ? ok('搜索回包写进 store（忙闲复位）')
+    : bad('搜索结果没落进 store', JSON.stringify(store.projSearchResult))
+
+  // 空查询不该发请求（省一次全项目扫描）
+  let calls = 0
+  globalThis.fetch = async () => { calls += 1; return { ok: true, status: 200, json: async () => ({ ok: true, value: {} }) } }
+  store.projSearchQuery = ''
+  await bundle.__runProjectSearch()
+  calls === 0 && store.projSearchResult === null
+    ? ok('空查询直接清空结果、不发请求')
+    : bad('空查询仍然发了请求', 'calls=' + calls)
+
+  // 没有项目时给出提示而不是静默
+  store.root = ''
+  await bundle.__runProjectSearch()
+  String(store.projSearchNotice).includes('先打开一个项目文件夹')
+    ? ok('没打开项目时明确提示')
+    : bad('没打开项目时没提示', String(store.projSearchNotice))
+  globalThis.fetch = realFetch
+
+  // .bib 补全：项目 bib 的 key 与文档内 \bibitem 合并、同名只留一条
+  Object.assign(store, {
+    root: 'E:\\proj-bib',
+    bibEntries: [
+      { key: 'knuth1984', type: 'article', title: 'Literate Programming', author: 'Knuth', year: '1984' },
+      { key: 'local1', type: 'book', title: '重复的应被 \\bibitem 压掉', author: '', year: '' }
+    ]
+  })
+  const options = bundle.__bibOptions('\\bibitem{local1} text')
+  const labels = options.map((item) => item.label)
+  labels.includes('knuth1984') && labels.includes('local1') && labels.filter((k) => k === 'local1').length === 1
+    ? ok('.bib 的 key 与 \\bibitem 合并、同名去重', labels.join(','))
+    : bad('文献候选合并/去重不对', labels.join(','))
+  const knuth = options.find((item) => item.label === 'knuth1984')
+  String(knuth && knuth.detail).indexOf('Knuth') >= 0
+    ? ok('.bib 候选带作者/年份当副标题', String(knuth && knuth.detail))
+    : bad('.bib 候选没有副标题')
+  store.bibEntries = null
+  bundle.__bibOptions('\\bibitem{a}').length === 1
+    ? ok('bibEntries 缺失时只列 \\bibitem（不炸）')
+    : bad('bibEntries 为 null 时出错')
+
+  // 代码折叠：\begin/\end 配对才折，单行环境 / 未闭合都不折
+  // （内核是 IIFE 包，没法 import EditorState；这里读源码断言 + 验算规则）
+  kernelSrc.includes('foldService.of(latexFoldService)')
+    ? ok('内核挂上 latexFoldService（foldGutter 由 basicSetup 给）')
+    : bad('内核没挂 foldService')
+  const foldPair = /function latexFoldService\(state, lineStart\)/.test(kernelSrc)
+    && kernelSrc.includes('openRe') && kernelSrc.includes('closeRe') && kernelSrc.includes('escaped')
+  foldPair
+    ? ok('折叠服务按 \\begin{name}/\\end{name} 同名配对')
+    : bad('折叠服务实现不对')
+  const foldOpen = /if \(depth <= 0\) return null/.test(kernelSrc) && kernelSrc.includes('return null')
+    && kernelSrc.includes('const total = state.doc.lines')
+  foldOpen
+    ? ok('未闭合环境不折（宁可折不了也不吃掉后半篇）')
+    : bad('未闭合处理不对')
+
+  // 全项目搜索的 UI 接线
+  const panelWiring = [
+    ['顶栏没有加「全项目搜索」按钮（入口在编辑区图标里）', !src.includes("'全项目搜索')")],
+    ['编辑区右上角有全项目搜索图标（ml-projsearch-fab）', src.includes('ml-projsearch-fab')],
+    ['浮层挂在编辑区、有输入框与结果列表', src.includes("store.projSearchOpen ? h(ProjectSearchPanel")],
+    ['点结果先 openTab 再选中（跨文件）',
+      /openTab\(root, item\.rel\)\.then\(function \(\)[\s\S]{0,160}?requestAnimationFrame\(go\)/.test(src)],
+    ['跳过去之后走 selectRange（不是只跳行）', src.includes('editorBridge.selectRange(start, end)')],
+    ['Ctrl+Shift+F 开全项目搜索（排在 Ctrl+F 之前）',
+      src.includes("event.shiftKey && (event.key === 'f'") && (() => {
+        const at = src.indexOf("event.shiftKey && (event.key === 'f'")
+        const block = src.slice(at, at + 600)
+        return block.includes('openProjectSearch()')
+      })()],
+    ['内核把 Ctrl+Shift+F 转给面板', kernelSrc.includes("key: 'Mod-Shift-f'") && kernelSrc.includes('options.onProjectSearch')],
+    ['项目搜索状态进会话隔离清单（属项目级）',
+      ['projSearchOpen', 'projSearchQuery', 'projSearchResult', 'bibEntries'].every((key) => bundle.__SESSION_FIELDS.includes(key))],
+    ['进项目顺手拉一次 .bib（失败静默）', src.includes('loadBibEntries(root)')]
+  ]
+  for (const [label, passed] of panelWiring) passed ? ok(label) : bad(label)
+
+  // 两个搜索浮层同一位置 → 必须互斥（用户 2026-11-16 报重叠）
+  const realRaf = globalThis.requestAnimationFrame
+  globalThis.requestAnimationFrame = (fn) => { fn(); return 0 }
+  Object.assign(store, { root: 'E:\\proj-x', searchOpen: true, projSearchOpen: false })
+  bundle.__openProjectSearch()
+  store.projSearchOpen === true && store.searchOpen === false
+    ? ok('开全项目搜索会关掉 tex 搜索（互斥）')
+    : bad('开全项目搜索没关 tex 搜索', JSON.stringify({ s: store.searchOpen, p: store.projSearchOpen }))
+  Object.assign(store, { searchOpen: false, projSearchOpen: true })
+  bundle.__openSearch('find')
+  store.searchOpen === true && store.projSearchOpen === false
+    ? ok('开 tex 搜索会关掉全项目搜索（互斥）')
+    : bad('开 tex 搜索没关全项目搜索', JSON.stringify({ s: store.searchOpen, p: store.projSearchOpen }))
+  globalThis.requestAnimationFrame = realRaf
+
+  Object.assign(store, {
+    root: '', projSearchOpen: false, projSearchQuery: '', projSearchResult: null,
+    projSearchNotice: '', projSearchBusy: '', bibEntries: []
+  })
+} catch (error) {
+  bad('全项目搜索 / 文献补全 / 折叠测试抛错', String(error.message))
 }
 
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)
