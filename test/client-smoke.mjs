@@ -668,6 +668,24 @@ try {
     ['显示缩放百分比', html.includes('200%')],
     ['右栏有缩放按钮', html.includes('>－<') && html.includes('>＋<')],
     ['顶栏有「适应窗口」按钮', html.includes('>适应<') && html.includes('整页适应当前窗口')],
+    // 用户 2026-11-16 要求「pdf预览区工具栏加入显示页数按钮」
+    ['PDF 顶栏有页数按钮（第 x / N 页）', html.includes('>第 1 / 2 页<') && html.includes('点一下跳到指定页')],
+    ['页数按钮在「适应」右边', html.indexOf('>适应<') < html.indexOf('>第 1 / 2 页<')],
+    ['没有 PDF 时页数按钮禁用（拿不到页数就显示「页数 —」）',
+      src.includes('disabled: !store.pdfRel || !store.pdfPages') && src.includes("'页数 —'")],
+    // 页数按钮不只会显示，还能跳页：输入框回车 → pdfFocusPage（PdfPane 已有滚到该页的 effect）
+    ['点页数按钮展开跳页输入框（回车跳、Esc 关）',
+      src.includes('pdfJumpOpen: !store.pdfJumpOpen') && src.includes('pdfFocusPage: target, pdfViewPage: target, pdfJumpOpen: false')],
+    ['越界页码会被夹到 1..N', /var target = clamp\(wanted, 1, store\.pdfPages\)/.test(src)],
+    // 「第 x / N 页」的 x 来自滚动位置：探测线取可视区顶部 1/3，比面积法稳
+    ['当前页跟随滚动更新（顶部 1/3 探测线 + rAF 节流）',
+      src.includes('var probe = host.top + host.height / 3') && src.includes("element.addEventListener('scroll', onScroll, { passive: true })")],
+    ['滚到的页与状态一致才 patch（避免滚动时每帧重渲染）',
+      src.includes('if (found && found !== state.pdfViewPage) patch({ pdfViewPage: found })')],
+    ['换 PDF 时阅读位置回到第 1 页', src.includes('pdfViewPage: 1,\n          pdfJumpOpen: false,')],
+    ['阅读位置跟项目走（进会话隔离清单），跳页输入框不跟', bundle.__SESSION_FIELDS.includes('pdfViewPage') && !bundle.__SESSION_FIELDS.includes('pdfJumpOpen')],
+    ['切会话时收起跳页输入框（瞬时状态不跨项目残留）',
+      src.includes('next.pdfJumpOpen = false') && src.includes("next.pdfJumpText = ''")],
     // 用户 2026-11-14 要求：PDF 区顶栏最右边的「新标签」链接去掉
     ['PDF 顶栏不再有「新标签」链接', !html.includes('>新标签<') && !html.includes('把整份 PDF 在新标签打开')],
     ['定位环渲染在页面上', html.includes('border-radius:50%')],
@@ -1237,14 +1255,22 @@ try {
   const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   ok('接线：reloadTab 算改动行 → 编辑器同步 effect 涂绿',
     src.includes('queueFlash(tab.id, live.text, data.text)') && src.includes('var flash = takeFlash(tab.id)'))
-  ok('CM 路径：视口滚动补涂 + 换标签清绿底',
-    src.includes('onViewport: function () { repaintFlash() }') && src.includes('if (flashState.owner === view) clearFlash()'))
+  ok('CM 路径：换标签清绿底', src.includes('if (flashState.owner === view) clearFlash()'))
+  ok('CM 路径改走内核 line 装饰（不再写行内联背景）',
+    src.includes('startFlashLines(flash.tabId, flash.ranges, view, kernel)') &&
+    src.includes('startFlashLines(\'goto\', [{ from: store.flashLine, to: store.flashLine }], view, kernel)'))
+  // 关键回归：CM 每次渲染都用 cssText 重写行元素 style，行内联背景活不过一帧
+  // （2026-11-16 headless 实测），所以 startFlashLines 里绝不能出现 style.backgroundColor。
+  const startFlashLinesBody = (/function startFlashLines\(tabId, ranges, view, kernel\) \{[\s\S]*?\n    \}/.exec(src) || [''])[0]
+  ok('startFlashLines 不碰行元素内联样式', startFlashLinesBody.length > 0 && !startFlashLinesBody.includes('style.backgroundColor'))
   ok('回退（textarea）路径同样标绿', src.includes('startFlash(flash.tabId, flash.ranges, container, container'))
   ok('接线：diff 入口先归一化换行（CRLF/LF 混用不会整篇刷绿）',
     /function diffLineRanges\(oldText, newText\) \{[\s\S]{0,200}normalizeEol\(oldText\)[\s\S]{0,120}normalizeEol\(newText\)/.test(src))
+  ok('收摊时把内核装饰也撤掉', /var kernelView = flashState.kernelView[\s\S]{0,600}kernel\.setFlashLines\(kernelView, \[\]\)/.test(src))
   const kernelSrc = readFileSync(new URL('../lib/vendor/entry.js', import.meta.url), 'utf8')
-  ok('不动内核：entry.js 里没有标绿代码（刷新页面即生效，不用重建 cm6.js）',
-    !kernelSrc.includes('startFlash') && !kernelSrc.includes('FLASH_GREEN'))
+  ok('内核提供 cm-flash-line 主题 + flashLineField + setFlashLines 导出',
+    kernelSrc.includes("'.cm-flash-line': {") && kernelSrc.includes('const flashLineField = StateField.define(') &&
+    kernelSrc.includes('function setFlashLines(view, lines)') && /window\.__molingCM = \{[\s\S]{0,600}setFlashLines/.test(kernelSrc))
 } catch (error) {
   bad('标绿测试抛错', String(error.message))
 }
@@ -2413,7 +2439,8 @@ try {
     ['选中同词高亮加深并描边（原来 0.14 太淡）',
       kernelSrc.includes('rgba(120, 170, 255, 0.30)') && /\.cm-selectionMatch[\s\S]{0,200}?outline/.test(kernelSrc)],
     ['Ctrl+H 直接把焦点给替换框', src.includes("focusSearchField(mode === 'replace' ? 'replace' : 'find')")],
-    ['内核版本已加一（浏览器不会用旧缓存包）', bundle.__kernelAssetUrl().includes('v=12')]
+    ['内核版本已加一（浏览器不会用旧缓存包）',
+      bundle.__kernelAssetUrl().includes('v=' + (/var KERNEL_VERSION = '(\d+)'/.exec(src) || [])[1])]
   ]
   for (const [label, passed] of wiring) passed ? ok(label) : bad(label)
 
@@ -2527,6 +2554,63 @@ try {
     ? ok('未闭合环境不折（宁可折不了也不吃掉后半篇）')
     : bad('未闭合处理不对')
 
+  // 章节分割线（用户 2026-11-16「在不同章节之间，键入横线进行分割，以区分」）
+  kernelSrc.includes('sectionRuleExtension()')
+    ? ok('内核挂上章节分割线扩展')
+    : bad('内核没挂 sectionRuleExtension')
+  const ruleExt = /function sectionRuleExtension\(\)/.test(kernelSrc)
+    && kernelSrc.includes('Decoration.line({ class: classes.join(\' \') })')
+  ruleExt
+    ? ok('分割线画在章节标题行上沿（Decoration.line，不占行内字符）')
+    : bad('分割线实现不对')
+  const ruleRe = /SECTION_RULE_RE = \/\^\\s\*\\\\\(\?:part\|chapter\|section\|subsection\|subsubsection\|paragraph\|subparagraph\)/.test(kernelSrc)
+  ruleRe
+    ? ok('分割线只认行首章节命令（注释行 / 正文不动）')
+    : bad('章节命令正则不对')
+  kernelSrc.includes('number > 1 && SECTION_RULE_RE.test(line.text)')
+    ? ok('首行不加分割线（文档开头不需要）')
+    : bad('首行没排除')
+  kernelSrc.includes("'.cm-section-rule': {")
+    ? ok('内核主题里有 .cm-section-rule 样式')
+    : bad('缺少 .cm-section-rule 主题')
+
+  // 章节底色带（用户 2026-11-16「section 预览区底色不同，循环着来…不抢眼」）
+  const bandImpl = /function sectionBands\(doc\)/.test(kernelSrc)
+    && /function bandIndexOf\(bands, number\)/.test(kernelSrc)
+  bandImpl
+    ? ok('内核按最浅一级章节命令切底色带')
+    : bad('缺少 sectionBands / bandIndexOf')
+  kernelSrc.includes("const BAND_CLASSES = ['cm-sec-band-0', 'cm-sec-band-1', 'cm-sec-band-2', 'cm-sec-band-3']")
+    ? ok('底色四档循环（cm-sec-band-0..3）')
+    : bad('底色档位不对')
+  kernelSrc.includes('const bandCache = new WeakMap()')
+    ? ok('底色带按文档对象缓存（滚动不重扫全文）')
+    : bad('底色带没有缓存')
+  ;['cm-sec-band-0', 'cm-sec-band-1', 'cm-sec-band-2', 'cm-sec-band-3']
+    .every((name) => kernelSrc.includes("'." + name + "': {"))
+    ? ok('内核主题四档底色都在（透明度 ≤0.05，不压字）')
+    : bad('缺少底色主题')
+  // 回退编辑器也要有同款分割线
+  src.includes("' ml-hl-rule'")
+    ? ok('回退编辑器章节行也加分割线类')
+    : bad('回退编辑器没有 ml-hl-rule')
+  src.includes('.ml-hl-rule{border-top:1px solid')
+    ? ok('回退编辑器分割线样式与内核同观感')
+    : bad('缺少 .ml-hl-rule 样式')
+  // 回退编辑器的底色带
+  const bandFallback = /function sectionBandStarts\(rows\)/.test(src)
+    && /function sectionBandAt\(starts, index\)/.test(src)
+    && src.includes("cls += ' ml-hl-band-' + (band % 4)")
+  bandFallback
+    ? ok('回退编辑器也按章节切底色带（与内核同规则）')
+    : bad('回退编辑器缺底色带')
+  src.includes('cached.band === band')
+    ? ok('缓存命中也要比对底色带（章节增删后底色不僵住）')
+    : bad('缓存没比对 band')
+  ;['0', '1', '2', '3'].every((n) => src.includes('.ml-hl-band-' + n + '{background-color:rgba('))
+    ? ok('回退编辑器四档底色样式都在')
+    : bad('回退编辑器缺底色样式')
+
   // 全项目搜索的 UI 接线
   const panelWiring = [
     ['顶栏没有加「全项目搜索」按钮（入口在编辑区图标里）', !src.includes("'全项目搜索')")],
@@ -2569,6 +2653,26 @@ try {
   })
 } catch (error) {
   bad('全项目搜索 / 文献补全 / 折叠测试抛错', String(error.message))
+}
+
+console.log('34) 编译结果条：重跑次数与「已清理上次中断的辅助文件」都要说出来')
+try {
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const compileBlock = (() => {
+    const at = src.indexOf('function compileActive(')
+    return at < 0 ? '' : src.slice(at, at + 4200)
+  })()
+  const wiring = [
+    ['成功条带「PDF 后端重跑 N 次」', compileBlock.includes("data.pdfRetries ? '（PDF 后端重跑 ' + data.pdfRetries + ' 次）'")],
+    ['成功条带「已清理上次中断的 N 个辅助文件」',
+      /data\.success[\s\S]{0,400}?data\.recovered \|\| \[\]\)\.length \? ' · 已清理上次中断的 '/.test(compileBlock)],
+    ['失败条也说出来（不默默处理）',
+      /'编译失败 · ' \+ \(data\.errors \|\| \[\]\)\.length[\s\S]{0,200}?已清理上次中断的/.test(compileBlock)],
+    ['没有 recovered 时不显示多余字样', (compileBlock.match(/已清理上次中断的/g) || []).length === 2]
+  ]
+  for (const [label, passed] of wiring) passed ? ok(label) : bad(label)
+} catch (error) {
+  bad('编译结果条测试抛错', String(error.message))
 }
 
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)

@@ -7,12 +7,12 @@
  * 退出码非 0 表示失败，便于人工回归。
  * 注意：本文件含中文，别用 PowerShell 的 Get-Content/Set-Content 往返改写（会变乱码）。
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { apply } from '../lib/index.js'
-import { pickLatexEngine } from '../lib/latex.js'
+import { pickLatexEngine, pdfHasObjectStream, prepareFigureShadow } from '../lib/latex.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixtures = join(here, 'fixtures')
@@ -357,6 +357,193 @@ if (fullMode) {
       : bad('once 分支里跑了 bibtex')
   } catch (error) {
     bad('编译失败兜底测试抛错', String(error.message))
+  }
+
+  console.log('16) 辅助文件脏标记：失败只标脏、下次开编先清、手动 clean 撤标记')
+  try {
+    const {
+      auxDamageLikely,
+      markAuxDirty,
+      isAuxDirty,
+      recoverDirtyAux,
+      clearAuxDirty
+    } = await import('../lib/latex.js')
+    const dir = join(fixtures, 'dirty-proj')
+    rmSync(dir, { recursive: true, force: true })
+    mkdirSync(dir, { recursive: true })
+    const main = join(dir, 'main.tex')
+    writeFileSync(main, '\\documentclass{article}\n\\begin{document}hi\\end{document}\n')
+    writeFileSync(join(dir, 'main.aux'), '\\relax\n\\@writefile{toc}{半截')
+    writeFileSync(join(dir, 'main.nav'), 'partial')
+    writeFileSync(join(dir, 'main.toc'), 'keep-me')
+
+    isAuxDirty(main) === null
+      ? ok('一开始没有脏标记')
+      : bad('初始就有脏标记', JSON.stringify(isAuxDirty(main)))
+
+    // 「这一趟死在半路」的四种信号都要认，普通 LaTeX 错误不许认（否则每次报错都清文件）
+    const signals = [
+      ['Emergency stop', '! Emergency stop.'],
+      ['fatal', 'xdvipdfmx:fatal: pdf_link_obj(): passed invalid object.'],
+      ['No output PDF file written', 'No output PDF file written.'],
+      ['中断', 'anything']
+    ]
+    let signalOk = true
+    for (const [label, log] of signals) {
+      if (!auxDamageLikely(log, label === '中断')) {
+        signalOk = false
+        bad(`没认出「${label}」这种中断`)
+      }
+    }
+    if (signalOk) ok('Emergency stop / fatal / No output PDF / 中断 都算「这趟死在半路」')
+    auxDamageLikely('! Undefined control sequence.', false) === false
+      ? ok('普通 LaTeX 错误不算半路中断（不该清辅助文件）')
+      : bad('普通错误被当成中断了')
+
+    markAuxDirty(main, ['main.aux', 'main.nav'])
+    const entry = isAuxDirty(main)
+    entry && entry.files.length === 2
+      ? ok('标记写进临时目录后能读回来')
+      : bad('标记读不回来', JSON.stringify(entry))
+
+    const recovered = recoverDirtyAux(main)
+    recovered.length === 2 && recovered.includes('main.aux') && recovered.includes('main.nav')
+      ? ok('下次开编前把标记过的两个辅助文件清掉')
+      : bad('恢复清错了', JSON.stringify(recovered))
+    !existsSync(join(dir, 'main.aux')) && !existsSync(join(dir, 'main.nav'))
+      ? ok('半截的 .aux / .nav 真的删了')
+      : bad('该删的辅助文件还在')
+    existsSync(join(dir, 'main.toc'))
+      ? ok('没被标记的 .toc 一根毫毛都没动（不是无脑 clean）')
+      : bad('把没标记的 .toc 也删了')
+    isAuxDirty(main) === null
+      ? ok('清完标记一起撤掉（不会反复清）')
+      : bad('清完标记还在')
+
+    markAuxDirty(main, ['main.aux'])
+    clearAuxDirty(main) === true && clearAuxDirty(main) === false
+      ? ok('手动 clean 撤标记：第一次 true、再撤 false')
+      : bad('clearAuxDirty 幂等性不对')
+
+    writeFileSync(join(dir, 'main.aux'), 'x')
+    markAuxDirty(join(dir, 'MAIN.TEX'), ['main.aux'])
+    isAuxDirty(main) !== null
+      ? ok('Windows 路径大小写不敏感（MAIN.TEX 与 main.tex 算同一份）')
+      : bad('大小写不同就认不出同一份文档了')
+    recoverDirtyAux(main)
+    rmSync(dir, { recursive: true, force: true })
+
+    // 接线：失败分支标脏、成功分支撤标记、开编前先恢复
+    const src = readFileSync(new URL('../lib/latex.js', import.meta.url), 'utf8')
+    src.indexOf('const recovered = mode === \'clean\' ? [] : recoverDirtyAux(filePath)') >= 0
+      ? ok('开编前先恢复上次的脏文件（clean 模式跳过，它本来就全清）')
+      : bad('开编前没调 recoverDirtyAux')
+    const markBlock = /if \(!success && auxDamageLikely\(lastLog, aborted\)\) \{[\s\S]{0,200}?markAuxDirty\(filePath, damaged\)/.exec(src)
+    markBlock
+      ? ok('失败且像半路中断 → 标记这一趟写坏的辅助文件')
+      : bad('失败分支没标脏')
+    const clearOnSuccess = /else if \(success\) \{[\s\S]{0,80}?clearAuxDirty\(filePath\)/.exec(src)
+    clearOnSuccess
+      ? ok('编通了就撤掉旧标记')
+      : bad('成功分支没撤标记')
+    src.indexOf('recovered,') >= 0
+      ? ok('返回值带上 recovered（面板要告诉用户清过什么）')
+      : bad('返回值缺 recovered')
+    const serverSrc = readFileSync(new URL('../lib/server.js', import.meta.url), 'utf8')
+    const serverClearsDirty = /clean\(payload\)[\s\S]{0,300}?clearAuxDirty\(target\)/.test(serverSrc)
+    serverClearsDirty
+      ? ok('面板「清理」按钮也撤脏标记')
+      : bad('server clean 没撤标记')
+    const indexSrc = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
+    indexSrc.indexOf("'passCodes', 'pdfRetries'") >= 0
+      ? ok('latex_compile 输出 schema 声明了 passCodes / pdfRetries（code mode 不再判整次失败）')
+      : bad('schema 还缺 passCodes / pdfRetries')
+    indexSrc.indexOf("'recovered'") >= 0
+      ? ok('schema 也声明了 recovered')
+      : bad('schema 缺 recovered')
+  } catch (error) {
+    bad('辅助文件脏标记测试抛错', String(error.message))
+  }
+
+  console.log('17) 插图净化：含对象流的 PDF 图重写成扁平结构（消除 xdvipdfmx 缺陷）')
+  try {
+    const dir = mkdtempSync(join(tmpdir(), 'moling-fig-'))
+    const flat = join(dir, 'flat.pdf')
+    const objstm = join(dir, 'objstm.pdf')
+    writeFileSync(flat, '%PDF-1.5\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n%%EOF\n')
+    writeFileSync(objstm, '%PDF-1.5\n1 0 obj\n<< /Type /ObjStm /N 3 >>\nendobj\n2 0 obj\n<< /Type /XRef >>\nendobj\n%%EOF\n')
+
+    pdfHasObjectStream(flat) === false
+      ? ok('扁平 PDF 不算含对象流')
+      : bad('扁平 PDF 被判成含对象流了')
+    pdfHasObjectStream(objstm) === true
+      ? ok('带 /ObjStm 的 PDF 能认出来')
+      : bad('认不出 /ObjStm')
+    writeFileSync(join(dir, 'xref-only.pdf'), '%PDF-1.5\n9 0 obj\n<< /Type /XRef /Size 9 >>\nendobj\n%%EOF\n')
+    pdfHasObjectStream(join(dir, 'xref-only.pdf')) === true
+      ? ok('只有 /Type /XRef（无 /ObjStm）也算（同样会触发缺陷）')
+      : bad('漏判 /Type /XRef')
+    pdfHasObjectStream(join(dir, 'nope.pdf')) === false
+      ? ok('文件不存在时安全返回 false（不抛错）')
+      : bad('读不到文件时应该返回 false')
+
+    // 没有含对象流的图 → 不该建影子目录，编译行为保持原样
+    writeFileSync(join(dir, 'doc.tex'), '\\documentclass{article}\\begin{document}x\\end{document}\n')
+    const none = await prepareFigureShadow(join(dir, 'doc.tex'), {})
+    none === null
+      ? ok('没有需要净化的图时返回 null（编译路径完全不变）')
+      : bad('本该返回 null', JSON.stringify(none))
+
+    // 有含对象流的图但 pdftocairo 不可用 → 也不该炸，返回 null 或空重写
+    writeFileSync(
+      join(dir, 'doc2.tex'),
+      '\\documentclass{article}\\begin{document}\\includegraphics{objstm.pdf}\\end{document}\n'
+    )
+    let degraded = null
+    try {
+      degraded = await prepareFigureShadow(join(dir, 'doc2.tex'), { texlivePath: 'Z:\\no-such-texlive' })
+    } catch (error) {
+      bad('pdftocairo 缺失时抛错了', String(error.message))
+    }
+    if (degraded === null || degraded.rewritten.length === 0) {
+      ok('pdftocairo 不可用时安静退化（不改编译行为）')
+    } else {
+      bad('没有 pdftocairo 却声称重写过', JSON.stringify(degraded.rewritten))
+    }
+
+    // 接线：TEXINPUTS 必须在排版之前拼好，否则 .xdv 里记的还是原图路径
+    const src = readFileSync(new URL('../lib/latex.js', import.meta.url), 'utf8')
+    const texinputsIdx = src.indexOf('env.TEXINPUTS = `${figureShadow.shadowDir}')
+    const firstRunIdx = src.indexOf('await runEngine(')
+    texinputsIdx >= 0 && firstRunIdx > texinputsIdx
+      ? ok('TEXINPUTS 在第一次排版之前就设好（后端阶段再设无效）')
+      : bad('TEXINPUTS 拼接位置不对', `texinputs=${texinputsIdx} run=${firstRunIdx}`)
+    src.indexOf('await prepareFigureShadow(filePath, { texlivePath, signal })') >= 0
+      ? ok('开编前先准备净化插图')
+      : bad('没调 prepareFigureShadow')
+    const shadowGuard = /if \(engine !== 'latexmk'\) \{[\s\S]{0,300}?prepareFigureShadow/.exec(src)
+    shadowGuard
+      ? ok('latexmk 引擎跳过净化（它自己管图）')
+      : bad('没对 latexmk 做跳过')
+
+    const indexSrc2 = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
+    indexSrc2.indexOf("'figuresRewritten'") >= 0
+      ? ok('schema 声明了 figuresRewritten')
+      : bad('schema 缺 figuresRewritten')
+    indexSrc2.indexOf('已净化 ${value.figuresRewritten}') >= 0
+      ? ok('结果里会说明净化了几张图（不默默处理）')
+      : bad('结果没提净化数量')
+    src.indexOf('figuresRewritten: figureShadow ? figureShadow.rewritten.length : 0') >= 0
+      ? ok('返回值带上 figuresRewritten')
+      : bad('返回值缺 figuresRewritten')
+    const swallowGuard = src.indexOf('} catch { figureShadow = null }') >= 0
+    swallowGuard
+      ? ok('净化失败不影响编译（异常吞掉退回原图）')
+      : bad('净化异常没兜住')
+
+    rmSync(dir, { recursive: true, force: true })
+  } catch (error) {
+    bad('插图净化测试抛错', String(error.message))
   }
 
   // 中文用例与生成的 PDF 一并收尾，让 fixtures 里只剩 .tex
