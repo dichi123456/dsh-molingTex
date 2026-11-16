@@ -1143,6 +1143,12 @@ try {
   ok('磁盘变了 → 编辑区自动同步', store.tabs[0].text === 'new content from the LLM')
   ok('状态栏给出同步提示', String(store.notice).includes('已同步') && store.noticeOk === true)
   ok('同步后版本戳跟着更新', bundle.__stampOf('main.tex') === '2')
+  // 用户 2026-11-16 报的「大模型改了行、浅绿又没了」：生产端必须真的把改动行排进队列，
+  // 否则编辑器那边的 takeFlash 永远拿到 null（只测纯函数与涂色会漏掉这一环）。
+  const queued = bundle.__takeFlash('w-1')
+  ok('外部改动行会排进标绿队列',
+    Boolean(queued) && queued.tabId === 'w-1' && queued.ranges.length > 0
+    && queued.ranges[0].from === 1 && queued.ranges[0].to === 1)
 
   // 没变化的轮询不该重复动编辑区
   await sync()
@@ -1256,8 +1262,11 @@ try {
   ok('setDoc 前先记下预期文本', src.includes('suppressDirtyText = tab.text'))
   const reloadAt = src.indexOf('setTab(tab.id, { text: data.text, loading: false })')
   const flashAt = src.indexOf('try { queueFlash(tab.id, live.text, data.text) }')
-  ok('同步先落地、标绿后置且自带 try（标绿出错不拖垮同步）',
-    reloadAt > 0 && flashAt > reloadAt && src.includes('try { queueFlash(tab.id, live.text, data.text) }'))
+  // 用户 2026-11-16 报的「绿标又没了」：排队必须**先于** setTab。
+  // 反过来的话 setTab 触发的重渲染会抢先把 effect 跑掉，takeFlash 拿到空值。
+  ok('标绿先排队、再落地同步（顺序不能反）',
+    reloadAt > 0 && flashAt > 0 && flashAt < reloadAt
+    && src.includes('try { queueFlash(tab.id, live.text, data.text) } catch (error) { delete pendingFlash[tab.id] }'))
 
   // 涂/摘：用假 DOM 走一遍 startFlash → paintFlash → clearFlash
   const mkNode = (line) => ({
@@ -2224,7 +2233,7 @@ try {
     ['再用 sidebarRight.mounted 兜一层（浮动面板下 visible 可能同时为真）',
       src.includes("state.ctx.get('sidebarRight')") && src.includes('mounted !== sessionId')],
     ['mounted 服务没就绪会重试，不是只试一次', src.includes('tries++ < 20')],
-    ['切会话后作废上一个会话的待触发定时器', /pendingFlash = null\s*\n\s*return true/.test(src)],
+    ['切会话后作废上一个会话的待涂标绿', /pendingFlash = \{\}\s*\n\s*return true/.test(src)],
     ['进项目闸门在切会话时复位（否则轮询永久暂停）', src.includes('enteringRoot = false   // 卡在「进项目」中间被切走')],
     ['设置类字段不在隔离清单里（编译方式/引擎/分栏宽等）',
       !bundle.__SESSION_FIELDS.includes('engine') && !bundle.__SESSION_FIELDS.includes('treeW') && !bundle.__SESSION_FIELDS.includes('mode')],
