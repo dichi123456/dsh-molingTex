@@ -1130,9 +1130,12 @@ try {
   ok('同步走的是 tree 通道（不再依赖 stat 端点）', calls.includes('tree') && !calls.includes('stat'))
   ok('同步成功后指示灯变绿', store.syncOk === true && store.syncError === '')
 
-  // 大模型改了磁盘 → 下一轮把新内容读进编辑区
+  // 大模型改了磁盘 → 先登记「待同步」，mtime 稳定一次之后才真的读进来
   disk.text = 'new content from the LLM'
   mtime = 2
+  await sync()
+  ok('外部改动先登记（不立刻读，防止读到写一半的中间态）',
+    store.tabs[0].text === 'old' && bundle.__stampOf('main.tex') === '1')
   await sync()
   ok('磁盘变了 → 编辑区自动同步', store.tabs[0].text === 'new content from the LLM')
   ok('状态栏给出同步提示', String(store.notice).includes('已同步') && store.noticeOk === true)
@@ -1140,12 +1143,14 @@ try {
 
   // 没变化的轮询不该重复动编辑区
   await sync()
+  await sync()
   ok('没变化就不动', store.tabs[0].text === 'new content from the LLM')
 
   // 标签有未保存改动 → 只提醒，绝不覆盖
   store.tabs[0].dirty = true
   disk.text = 'LLM wrote again'
   mtime = 3
+  await sync()
   await sync()
   ok('脏标签不被外部改动覆盖', store.tabs[0].text === 'new content from the LLM')
   ok('脏标签给出红色提醒', String(store.notice).includes('未保存') && store.noticeOk === false)
@@ -1427,8 +1432,16 @@ try {
     ['默认关闭，并进 localStorage', src.includes('autoCompile: false')
       && src.includes('autoCompile: state.autoCompile === true')
       && src.includes('autoCompile: saved.autoCompile === true')],
-    ['防抖 900ms，正忙时跳过（不排队堆积）',
-      src.includes('}, 900)') && /if \(state\.busy\) return\n\s+if \(!activeTab\(\)\) return/.test(src)],
+    ['静默窗口 1.8 秒 + 两次编译至少隔 3 秒（打字不会中途开编）',
+      src.includes('var AUTO_COMPILE_QUIET_MS = 1800')
+      && src.includes('var AUTO_COMPILE_MIN_GAP_MS = 3000')
+      && src.includes('var wait = Math.max(AUTO_COMPILE_QUIET_MS, gap)')],
+    ['单飞：编译中只记「待编」标记，不排队叠加',
+      src.includes('if (compiling) { autoCompilePending = true; return }')
+      && src.includes('if (autoCompilePending) scheduleAutoCompile()')],
+    ['编译中、标签仍脏都不开编（等静默窗口）',
+      src.includes('if (compiling || state.busy) { autoCompilePending = true; return }')
+      && src.includes('if (tab && tab.dirty) { autoCompilePending = true; return }')],
     ['关着的时候不排期', src.includes('if (state.autoCompile !== true) return')],
     ['保存成功后触发', /scheduleAutoCompile\(\)\s*\/\/ 「自编」开着就顺手编一次/.test(src)],
     ['外部改动同步后触发', /scheduleAutoCompile\(\)\s*\/\/ 「自编」开着：大模型改完就自动编一次/.test(src)],
