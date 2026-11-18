@@ -418,7 +418,8 @@ try {
     // 清晰度只作用于「预览栅格化」：编译请求里不能出现 dpi，
     // 否则会让人以为编译产物被降质（用户 2026-11-16 问过这件事）。
     ['编译请求不带 dpi（产物始终是矢量 PDF）', !/api\('compile',\s*\{[^}]*dpi/.test(src)],
-    ['dpi 只用于预览图片地址', src.includes("'&dpi=' + PDF_DPI")],
+    // 预览与投屏共用 pdfPageUrl：默认落回 PDF_DPI，投屏可显式传三档 DPI
+    ['dpi 只用于图片地址（默认落回 PDF_DPI）', src.includes("var useDpi = Number(dpi) > 0 ? Number(dpi) : PDF_DPI")], 
     ['PDF 顶栏不再有清晰度下拉', !html.includes('预览清晰度：') && !html.includes('极')],
     ['按加载前占位比例（防跳动）', /aspect-ratio:595\.276 \/ 841\.89/.test(html) || /aspect-ratio:595\.276\/841\.89/.test(html)]
   ]
@@ -2674,6 +2675,423 @@ try {
 } catch (error) {
   bad('编译结果条测试抛错', String(error.message))
 }
+console.log('35) 投屏讲解：键位状态机 / 讲稿旁挂 / 观众窗接线')
+try {
+  const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const key = bundle.__presentKey
+  const base = { page: 5, total: 20, black: false, white: false, badge: false, overview: false, help: false, pending: '', pendingAt: 0 }
+  const press = (input, k, now) => key(input, k, now === undefined ? 1000 : now)
+
+  const keys = [
+    ['→ 下一页', (() => { const r = press(base, 'ArrowRight'); return r.action === 'next' && r.state.page === 6 })()],
+    ['Space 下一页', (() => { const r = press(base, ' '); return r.action === 'next' && r.state.page === 6 })()],
+    ['PageDown 下一页', (() => { const r = press(base, 'PageDown'); return r.state.page === 6 })()],
+    ['← 上一页', (() => { const r = press(base, 'ArrowLeft'); return r.action === 'prev' && r.state.page === 4 })()],
+    ['Backspace 上一页（不退出）', (() => { const r = press(base, 'Backspace'); return r.action === 'prev' && r.state.page === 4 })()],
+    ['Shift + → 一次走 10 页', (() => { const r = press(base, 'Shift+ArrowRight'); return r.state.page === 15 })()],
+    ['Shift + ← 一次退 10 页（越过首页就停在首页）', (() => { const r = press(base, 'Shift+ArrowLeft'); return r.state.page === 1 && r.action === 'prev' })()],
+    ['Home 首页', (() => { const r = press(base, 'Home'); return r.action === 'first' && r.state.page === 1 })()],
+    ['End 末页', (() => { const r = press(base, 'End'); return r.action === 'last' && r.state.page === 20 })()],
+    ['末页再按 → 不越界', (() => { const r = press({ page: 20, total: 20 }, 'ArrowRight'); return r.state.page === 20 && r.action === 'end' })()],
+    ['首页再按 ← 不越界', (() => { const r = press({ page: 1, total: 20 }, 'ArrowLeft'); return r.state.page === 1 && r.action === 'start' })()],
+    ['数字累积成 12', (() => { const r = press(press(base, '1').state, '2'); return r.action === 'typing' && r.state.pending === '12' })()],
+    ['数字 + Enter 跳页（页码由调用方按 pending 取）', (() => { const r = press(press(base, '1').state, '2'); const j = press(r.state, 'Enter'); return j.action === 'jump' && j.state.page === 5 && j.state.pending === '' })()],
+    ['只按 Enter 当翻页', (() => { const r = press(base, 'Enter'); return r.action === 'next' && r.state.page === 6 })()],
+    ['数字过期（1.5 秒）后 Enter 不再跳页', (() => { const a = press(base, '1', 1000); const b = press(a.state, 'Enter', 4000); return b.action === 'next' })()],
+    ['Esc 直接退出（不二次确认）', press(base, 'Escape').action === 'exit'],
+    ['Esc 先关帮助层', (() => { const r = press({ help: true }, 'Escape'); return r.action === 'dismiss' && r.state.help === false })()],
+    ['Esc 先关总览层', (() => { const r = press({ overview: true }, 'Escape'); return r.action === 'dismiss' && r.state.overview === false })()],
+    ['B 黑屏', (() => { const r = press(base, 'b'); return r.action === 'black' && r.state.black === true })()],
+    ['黑屏时按 W 转白屏（互斥）', (() => { const r = press({ black: true }, 'w'); return r.action === 'white' && r.state.white === true && r.state.black === false })()],
+    ['再按 W 恢复画面', (() => { const r = press({ white: true }, 'w'); return r.action === 'show' && r.state.white === false })()],
+    ['N 页码角标', (() => { const r = press(base, 'n'); return r.action === 'badge' && r.state.badge === true })()],
+    ['O 缩略图总览', (() => { const r = press(base, 'o'); return r.action === 'overview' && r.state.overview === true })()],
+    ['? 帮助（与总览互斥）', (() => { const r = press({ overview: true }, '?'); return r.action === 'help' && r.state.help === true && r.state.overview === false })()],
+    ['没绑定的键不动状态', (() => { const r = press(base, 'x'); return r.action === 'none' && r.state.page === 5 })()]
+  ]
+  for (const [label, passed] of keys) passed ? ok(label) : bad(label)
+
+  const notes = [
+    ['旁挂讲稿与 PDF 同目录同基名', bundle.__notesRelFor('main.pdf') === 'main.notes.md'],
+    ['子目录里的 PDF 也同目录', bundle.__notesRelFor('slides/a/b.pdf') === 'slides/a/b.notes.md'],
+    ['Windows 反斜杠路径也认', bundle.__notesRelFor('E:\\p\\a.pdf') === 'E:\\p\\a.notes.md'],
+    ['没有 PDF 就没有讲稿路径', bundle.__notesRelFor('') === ''],
+    ['先 .notes.md 后 .notes.txt', JSON.stringify(bundle.__notesCandidatesFor('x.pdf')) === JSON.stringify(['x.notes.md', 'x.notes.txt'])]
+  ]
+  for (const [label, passed] of notes) passed ? ok(label) : bad(label)
+
+  const numbered = bundle.__parsePresentNotes('# 标题\n\n通用提示\n\n## 2\n\n第二页讲稿\n\n## 3\n\n第三页讲稿')
+  const splitByRule = bundle.__parsePresentNotes('第一页\n\n---\n\n第二页\n\n---\n\n第三页')
+  const flat = bundle.__parsePresentNotes('只有一段通用开场白')
+  // md 里常拿 <!-- ... --> 写「这段别投出去」的备忘 —— 以前会原样出现在讲稿区（用户报过）。
+  const commented = bundle.__parsePresentNotes('<!-- 给自己看的备忘 -->\n\n## 2\n\n第二页讲稿')
+  const parsed = [
+    ['## 页码分节认出来', numbered.grouped === true && numbered.count === 2],
+    ['第一个分节之前的正文当通用讲稿', numbered.common.includes('通用提示')],
+    ['第 2 页只拿到自己的讲稿', String(numbered.pages['2'] || '').includes('第二页讲稿') && !String(numbered.pages['2'] || '').includes('第三页')],
+    ['单独一行的 --- 也能逐页分', splitByRule.count === 3 && String(splitByRule.pages['1'] || '').includes('第一页')],
+    ['没有分隔符时整篇都是通用讲稿', flat.grouped === false && flat.count === 0 && flat.common === '只有一段通用开场白'],
+    ['取某页讲稿带通用段', (() => { const one = bundle.__presentNotesForPage(numbered, 2); return one.common.includes('通用提示') && one.page.includes('第二页讲稿') })()],
+    ['没有这一页时只回通用段', (() => { const one = bundle.__presentNotesForPage(numbered, 9); return one.page === '' && one.common.includes('通用提示') })()],
+    ['HTML 注释整段剥掉（不投给观众看）',
+      !JSON.stringify(commented).includes('给自己看的备忘') && String(commented.pages['2'] || '').includes('第二页讲稿')],
+    // 讲稿文件第一行的 # 标题是文件抬头，不该当通用讲稿挂在每一页顶上（用户报过：
+    // 「骨架一建好，讲稿框里只有一行蓝色标题，分不清是没跑通还是没写」）。
+    ['开头的 # 标题被剥掉（不当通用讲稿）', bundle.__parsePresentNotes('# 论文章节标题\n\n## 1\n\n第一页').common === ''],
+    ['只剥第一个 H1，## 及以下照旧', (() => {
+      const p = bundle.__parsePresentNotes('# 抬头\n\n正文一行\n\n## 2\n\n第二页')
+      return p.common === '正文一行' && String(p.pages['2'] || '').includes('第二页')
+    })()],
+    ['没有分隔符时也剥 H1（整篇即通用）', bundle.__parsePresentNotes('# 抬头\n\n只有一段开场白').common === '只有一段开场白'],
+    ['stripNotesTitle 不误伤正文', bundle.__stripNotesTitle('没有标题的讲稿') === '没有标题的讲稿'],
+  ]
+  for (const [label, passed] of parsed) passed ? ok(label) : bad(label)
+
+  const md = bundle.__renderPresentNotesHtml
+  const escaped = md('看 <b>标签</b> & "引号"')
+  const mdChecks = [
+    ['标题渲染成 .ml-present-h', md('## 小标题').includes('ml-present-h')],
+    ['无序列表渲染成 .ml-present-li', md('- 一条').includes('ml-present-li')],
+    ['有序列表带序号', md('1. 一步').includes('ml-present-num')],
+    ['行内代码', md('用 `\\begin` 开头').includes('<code>\\begin</code>')],
+    ['粗体', md('**重点**').includes('<strong>重点</strong>')],
+    ['讲稿里的尖括号被转义（不会破坏 DOM）', escaped.includes('&lt;b&gt;') && !escaped.includes('<b>')],
+    ['& 也转义', escaped.includes('&amp;')],
+    ['空讲稿不产出 DOM', md('') === '']
+  ]
+  for (const [label, passed] of mdChecks) passed ? ok(label) : bad(label)
+
+  const skeleton = bundle.__presentNotesSkeleton(3, '答辩')
+  const dpiChecks = [
+    ['骨架每页一节', skeleton.includes('## 1') && skeleton.includes('## 2') && skeleton.includes('## 3')],
+    // 抬头写进 <!-- --> 里：骨架一建好讲稿框必须是「这一页还没有讲稿」，
+    // 而不是先顶一行标题（那是文件抬头，不是讲稿）。
+    ['骨架抬头在注释里，不进讲稿正文', skeleton.startsWith('<!-- 答辩') && !/^# /m.test(skeleton)],
+    ['骨架解析出来通用段为空', bundle.__parsePresentNotes(skeleton).common === ''],
+    ['骨架每页都还是空的（整块会显示「还没写」提示）', (() => {
+      const p = bundle.__parsePresentNotes(skeleton)
+      return String(bundle.__presentNotesForPage(p, 2).page || '').trim() === ''
+    })()],
+    // 200 铺满一块 1920 宽的屏仍然糊（用户实测），所以档位往 288/400 扩，上限跟着
+    // 宿主 PDF_DPI_MAX 提到 400。默认给中间的 288：再高单页要 ~1MB，翻页会顿。
+    ['DPI 五档（96/144/200/288/400）', JSON.stringify(bundle.__PRESENT_DPI_CHOICES) === JSON.stringify([96, 144, 200, 288, 400])],
+    ['DPI 默认 288（铺满 1080p 不糊）', bundle.__PRESENT_DPI_DEFAULT === 288 && bundle.__normalizePresentDpi(undefined) === 288],
+    ['不在档位里的值落回默认', bundle.__normalizePresentDpi(999) === 288 && bundle.__normalizePresentDpi(137) === 288],
+    ['合法档位原样保留（字符串也认）', bundle.__normalizePresentDpi('400') === 400 && bundle.__normalizePresentDpi(96) === 96],
+    ['投屏状态不进会话隔离清单（放映是这台机器的事）',
+      !bundle.__SESSION_FIELDS.includes('presentOn') && !bundle.__SESSION_FIELDS.includes('presentDpi')],
+    ['DPI 偏好写 localStorage', src.includes('presentDpi: state.presentDpi')]
+  ]
+  for (const [label, passed] of dpiChecks) passed ? ok(label) : bad(label)
+
+  // 顶栏「投屏」按钮：只有编译出 PDF 才可点，放映中换文案
+  const store = bundle.__store
+  const render = () => ReactDOMServer.renderToStaticMarkup(React.createElement(slot.component, {}))
+  store.view = 'workbench'
+  store.pane = 'pdf'
+  store.tabs = [{ id: 't-pdf', root: 'E:/p/paper', rel: 'main.tex', name: 'main.tex', text: 'x', dirty: false }]
+  store.activeId = 't-pdf'
+  store.root = 'E:/p/paper'
+  store.pdfRoot = 'E:/p/paper'
+  store.pdfRel = 'main.pdf'
+  store.pdfRev = '1712345678'
+  store.pdfPages = 3
+  store.pdfRaster = true
+  store.pdfUrl = ''
+  store.presentOn = false
+  const idleHtml = render()
+  store.presentOn = true
+  const liveHtml = render()
+  store.presentOn = false
+  store.pdfRel = ''
+  store.pdfPages = 0
+  const noPdfHtml = render()
+  store.pdfRel = 'main.pdf'
+  store.pdfPages = 3
+  const uiChecks = [
+    ['PDF 顶栏有「投屏」按钮', idleHtml.includes('投屏')],
+    ['放映中按钮换文案', liveHtml.includes('放映中')],
+    ['没有 PDF 时按钮不可点', /disabled=""[^>]*>投屏</.test(noPdfHtml) || noPdfHtml.includes('>投屏<')],
+    ['按钮接线到 openPresent', /onClick: function \(\) \{ openPresent\(\) \}/.test(src)],
+    // DSH 桌面版（Electron）给主窗装了 setWindowOpenHandler：about:blank / 相对地址
+    // 一律 deny（连原生窗口都不建，副屏/任务栏里什么都没有 —— 用户实测报过），
+    // 只有 http(s) 会转 shell.openExternal 开在系统默认浏览器里。
+    // 而桌面版主窗自己的 origin 是 dsh-app://app（自定义协议），拼出来的地址照样被
+    // deny（用户第二次实测：点「观众窗」还是没反应）—— 必须用宿主 http host 的真实
+    // origin，它挂在 window.__DSH_TRANSPORT__.streamBaseUrl 上。
+    ['观众窗打开的是宿主发的观众页（绝对 http 地址）',
+      /window\.open\(url, PRESENT_CHANNEL, PRESENT_WINDOW_FEATURES\)/.test(src) &&
+        /var url = origin \? origin \+ PRESENT_API : PRESENT_API/.test(src)],
+    ['观众页路由与主窗接口同一个前缀（/moling/present）',
+      /var PRESENT_API = '\/moling\/present'/.test(src)],
+    ['features 里带宽高（不带就被当标签页）',
+      /var PRESENT_WINDOW_FEATURES = 'popup=yes,width=\d+,height=\d+/.test(src)],
+    // 观众页在另一个浏览器进程里，BroadcastChannel 跨不过去 —— 改走宿主 HTTP 中转。
+    ['两窗进度用宿主中转同步（不再用 BroadcastChannel）',
+      /function publishPresentState\(rt\)/.test(src) && /function startPresentSync\(rt\)/.test(src) &&
+        !/new BroadcastChannel/.test(src)],
+    ['状态往 /moling/present/state 推、按键从 /key 取',
+      /PRESENT_API \+ '\/state'/.test(src) && /PRESENT_API \+ '\/key'/.test(src)],
+    ['收摊时推 live:false（观众页要回到「等待放映」）',
+      /function publishPresentStop\(rt\)[\s\S]{0,400}?live: false/.test(src)],
+    ['观众页轮询间隔单独一个常量', /var PRESENT_SYNC_MS = \d+/.test(src) && /PRESENT_SYNC_MS\)/.test(src)],
+    ['退出放映时停掉轮询（不留定时器）',
+      /function stopPresentSync\(rt\)[\s\S]{0,200}?clearInterval/.test(src)],
+    ['讲稿层挂在 document.body（不被面板子树裁切）', src.includes('document.body.appendChild')],
+    ['切会话会停放映', /next\.pdfJumpText = ''[\s\S]{0,120}?stopPresent\('session'\)/.test(src)],
+    ['关项目会停放映', /presentOn: false[\s\S]{0,2500}?stopPresent\('project'\)/.test(src)],
+    ['PDF 重编译后跟随新文件', /presentAdoptState\(\)/.test(src)],
+    ['退出放映回到当前页（右栏跟随）', /pdfFocusPage: page[\s\S]{0,80}?pdfViewPage/.test(src)],
+    ['总览缩略图第一次打开时才取图（长 deck 不打上百个请求）',
+      src.includes("setAttribute('data-thumb-page'") && /if \(rt\.key\.overview\)[\s\S]{0,260}?presentImageUrl\(rt, i \+ 1\)/.test(src)],
+    // 缩略图改用当前 DPI 那份：整本预热已经把它取进浏览器缓存了，
+    // 再按 96dpi 另取一轮等于白打一遍请求。
+    ['总览缩略图复用预热好的那档 DPI（不再另打一轮 96dpi）',
+      !/pdfPageUrl\(i \+ 1, 96/.test(src)],
+    // 外部浏览器的窗口拿不到引用，moveTo 之类的搬屏操作对它无效 —— 按钮改成
+    // 「再开一次观众窗」，怎么摆到副屏交给用户自己拖 + F11。
+    ['顶栏「观众窗」按钮能再开一次',
+      /var btnAudience = presentNode\('button', 'ml-present-btn', '观众窗'\)/.test(src) &&
+        /btnAudience\.addEventListener\('click'[\s\S]{0,120}?openPresentAudience\(rt\)/.test(src)],
+    // 观众页那边点一下画面就进全屏（方案 C）：主窗这边的文案不能还只说 F11，
+    // 否则用户会站在投影前找键盘。
+    ['「观众窗」按钮与提示都说清点一下画面即全屏',
+      src.includes('进全屏点一下画面，或按 F11') &&
+        src.includes('在那一页点一下画面就进全屏')],
+    ['帮助层同样写清点一下画面',
+      src.includes("['观众窗', '点顶栏「观众窗」再把观众页叫出来一次") &&
+        /观众窗', '点顶栏「观众窗」[\s\S]{0,80}?点一下画面/.test(src)],
+    ['attachPresentWindow 在拿不到窗口引用时不报错（桌面版返回 null 是正常的）',
+      /function attachPresentWindow\(rt, win\)[\s\S]{0,600}?rt\.win = win && !win\.closed \? win : null/.test(src) &&
+        !/打不开放映窗口/.test(src)],
+    // 桌面版 Windows 用 titleBarOverlay：顶上那条带子是 -webkit-app-region:drag 的
+    // 拖拽区，会吞掉点击 —— 全屏浮层不挖洞就点不动按钮（用户实测报过）。
+    ['讲稿层挖出拖拽区（no-drag），否则顶栏按钮点不动',
+      /#ml-present-root\{[^}]*?-webkit-app-region:no-drag/.test(src)],
+    ['顶栏按钮自己也标 no-drag', /\.ml-present-btn\{-webkit-app-region:no-drag/.test(src)],
+    // 讲稿层只盖**墨灵面板那一块**（左边对话框照常能看），四边全部走 CSS 变量；
+    // 建层时先用整窗兜底（顺便让开原生标题栏那条拖拽带），量到面板矩形再收进去。
+    // 用户报过「用户界面看着带点蓝色，跟周围 DSH 不统一」：讲稿层配色必须走
+    // 主题 token（--dsw-alias-*），不许再写死 GitHub 深蓝那套 #0d1117 / #161b22 / #58a6ff。
+    ['讲稿层配色走 DSH 主题 token（不再写死深蓝）',
+      /#ml-present-root\{[^}]*background:var\(--dsw-alias-bg-base/.test(src) &&
+        /#ml-present-root\{[^}]*color:var\(--dsw-alias-label-primary/.test(src) &&
+        /\.ml-present-head\{[^}]*background:var\(--dsw-alias-bg-layer-1/.test(src) &&
+        /\.ml-present-notes\{[^}]*background:var\(--dsw-alias-bg-layer-1/.test(src) &&
+        /\.ml-present-timer\{[^}]*background:var\(--dsw-alias-bg-layer-1/.test(src)],
+    ['讲稿层里没有遗留写死的深蓝色值',
+      (() => {
+        const css = bundle.__PRESENT_CSS
+        return typeof css === 'string' && !/#0d1117|#161b22|#010409|#21262d|#30363d|#58a6ff|#c9d1d9/i.test(css)
+      })()],
+    ['主题 token 都带硬编码兜底（拿不到 token 也不会透明）',
+      (() => {
+        const css = bundle.__PRESENT_CSS
+        const vars = css.match(/var\(--dsw-alias-[a-z0-9-]+/g) || []
+        const withFallback = css.match(/var\(--dsw-alias-[a-z0-9-]+,[^)]+\)/g) || []
+        return vars.length > 20 && withFallback.length === vars.length
+      })()],
+    ['讲稿层四边都走变量（能收进面板，也能兜底整窗）',
+      /#ml-present-root\{position:fixed;top:var\(--ml-present-top,0px\);left:var\(--ml-present-left,0px\)/.test(src) &&
+        /right:var\(--ml-present-right,0px\);bottom:var\(--ml-present-bottom,0px\)/.test(src)],
+    ['建层先铺满整窗（量不到面板时的兜底）',
+      /function presentFillWindow\(root\)[\s\S]{0,400}?--ml-present-bottom', '0px'/.test(src) &&
+        /presentFillWindow\(root\)/.test(src)],
+    ['放映范围按墨灵面板量（[data-moling="1"]，跳过 hidden 的会话副本）',
+      /document\.querySelectorAll\('\[data-moling="1"\]'\)/.test(src) &&
+        /el\.hidden \|\| !el\.offsetParent/.test(src)],
+    ['面板矩形换算成四边像素（纯函数，可自测驱动）',
+      (() => {
+        const box = bundle.__presentFrameBox({ left: 100, top: 40, right: 900, bottom: 700 }, 1200, 900)
+        return box && box.left === '100px' && box.top === '40px' && box.right === '300px' && box.bottom === '200px'
+      })()],
+    ['矩形越界时 right/bottom 夹成 0（不给负值）',
+      (() => {
+        const box = bundle.__presentFrameBox({ left: 0, top: 0, right: 1200, bottom: 900 }, 1000, 800)
+        return box && box.right === '0px' && box.bottom === '0px'
+      })()],
+    ['量不到窗口时按面板自身宽高兜底（不出 NaN）',
+      (() => {
+        const box = bundle.__presentFrameBox({ left: 10, top: 10, right: 210, bottom: 110 }, 0, 0)
+        return box && box.left === '10px' && box.right === '0px' && box.bottom === '0px'
+      })()],
+    ['面板藏起来时沿用上一次矩形（不跳回整窗）',
+      /if \(rect\) rt\.frame = rect[\s\S]{0,80}?else if \(rt\.frame\) rect = rt\.frame/.test(src)],
+    // 面板顶边如果落在原生标题栏那条 -webkit-app-region:drag 带里，顶栏按钮会被吞点击
+    // （用户实测报过），所以 top 不许高过 presentTitlebarOffset()。
+    ['顶边不落进原生拖拽带（top 有下限）',
+      /var clearance = presentTitlebarOffset\(\)[\s\S]{0,200}?box\.top = clearance \+ 'px'/.test(src)],
+    ['拖分栏 / 缩窗会重算矩形',
+      src.includes("window.addEventListener('resize', presentSyncFrame)") &&
+        src.includes("document.addEventListener('fullscreenchange', presentSyncFrame)") &&
+        /new ResizeObserver\(function \(\) \{ presentSyncFrame\(\) \}\)/.test(src)],
+    ['退出放映摘掉监听与 ResizeObserver（不留僵尸处理器）',
+      src.includes("window.removeEventListener('resize', presentSyncFrame)") &&
+        src.includes("document.removeEventListener('fullscreenchange', presentSyncFrame)") &&
+        /presentStopWatchScope\(rt\)/.test(src) && /scopeObserver\.disconnect\(\)/.test(src)],
+    // 用 DSH 自己的 --dsh-frame-top-clearance（Windows=标题栏高、macOS=48px、浏览器=0），
+    // 别再自己判 data-fullscreen：那条拖拽带和 .frame 的 padding-top 全屏时都不重置。
+    ['偏移量取 DSH 的 --dsh-frame-top-clearance',
+      src.includes("--dsh-frame-top-clearance") && /presentTitlebarOffset/.test(src)],
+    ['没有该变量时落回标题栏高度，再不行 0',
+      /clearance > 0[\s\S]{0,200}?--dsh-windows-titlebar-height/.test(src)],
+    ['没进放映时运行时是空的', bundle.__presentRuntime() === null],
+    ['导出接线齐（自测可驱动）', typeof bundle.__openPresent === 'function' && typeof bundle.__stopPresent === 'function' && typeof bundle.__presentAdoptState === 'function'],
+    ['中转相关的导出也在（观众窗与状态发布可被测试驱动）',
+      typeof bundle.__openPresentAudience === 'function' && typeof bundle.__publishPresentState === 'function' &&
+        bundle.__presentSyncMs > 0],
+    // 版面照 PowerPoint 演讲者视图：左边一整块是当前页（图 + 底部翻页条），
+    // 右边一列三段（上「下一张幻灯片」、中讲稿、下计时），讲稿不再是整宽底部横条。
+    // 左右两列的底边要齐平：靠同一个 CSS 变量 --ml-present-bottom-h 给两边最后一行定高，
+    // 再加两边相同的 gap，于是「图底边 / 讲稿底边 / 计时底边」自然对齐，不用 JS 量高。
+    ['当前页独占左侧大块（.ml-present-stage）',
+      /\.ml-present-stage\{flex:1 1 auto;min-width:0;min-height:0/.test(src) &&
+        /var stage = presentNode\('div', 'ml-present-stage'\)/.test(src)],
+    ['右列是独立的窄栏（.ml-present-side），不是和当前页等分',
+      /\.ml-present-side\{flex:0 0 32%/.test(src) &&
+        /var side = presentNode\('div', 'ml-present-side'\)/.test(src) &&
+        /body\.appendChild\(stage\)[\s\S]{0,40}?body\.appendChild\(side\)/.test(src)],
+    ['讲稿放进右列下半（不再整宽铺在底部）',
+      /side\.appendChild\(nextPane\)[\s\S]{0,40}?side\.appendChild\(notes\)/.test(src) &&
+        !/root\.appendChild\(body\)[\s\S]{0,40}?root\.appendChild\(notes\)/.test(src)],
+    ['讲稿再也不会被 flex 当成整宽横条压成固定高度',
+      /\.ml-present-notes\{flex:1 1 auto;min-height:96px/.test(src)],
+    ['下一张缩略图有高度上限（横版缩略图不把讲稿挤没）',
+      /\.ml-present-pane>img\{width:100%;max-height:36vh/.test(src)],
+    ['底部居中翻页条照 PPT 的写法：「‹ 第 N 张幻灯片，共 M 张 ›」',
+      /nodes\.footText\.textContent = '第 ' \+ rt\.key\.page \+ ' 张幻灯片，共 ' \+ rt\.key\.total \+ ' 张'/.test(src) &&
+        /\.ml-present-foot\{flex:0 0 auto;height:var\(--ml-present-bottom-h,38px\);box-sizing:border-box;/.test(src) &&
+        /display:flex;align-items:center;justify-content:center;gap:16px;padding:0\}/.test(src)],
+    ['左下翻页条与右下计时用同一个高度变量（两列底边才敢对齐）',
+      /\.ml-present-body\{flex:1 1 auto;min-height:0;display:flex;gap:10px;padding:8px;--ml-present-bottom-h:38px\}/.test(src) &&
+        /\.ml-present-foot\{flex:0 0 auto;height:var\(--ml-present-bottom-h,38px\)/.test(src) &&
+        /\.ml-present-timer\{flex:0 0 auto;height:var\(--ml-present-bottom-h,38px\);box-sizing:border-box;/.test(src)],
+    ['两列上下间距一致（stage 与 side 的 gap 都是 8px，不然底边还是错开）',
+      /\.ml-present-stage\{flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;gap:8px\}/.test(src) &&
+        /\.ml-present-side\{flex:0 0 32%;min-width:200px;max-width:560px;min-height:0;/.test(src) &&
+        /flex-direction:column;gap:8px\}/.test(src)],
+    ['计时是右列第三段，排在讲稿下面（讲稿不再顶到底）',
+      /side\.appendChild\(nextPane\)[\s\S]{0,40}?side\.appendChild\(notes\)[\s\S]{0,40}?side\.appendChild\(timer\)/.test(src) &&
+        /var timer = presentNode\('div', 'ml-present-timer'\)/.test(src)],
+    ['计时从开放映起算，退出放映摘掉定时器（不留僵尸 interval）',
+      /presentTimerStart\(rt\)/.test(src) &&
+        /stopPresentSync\(rt\)[\s\S]{0,80}?presentTimerStop\(rt\)/.test(src) &&
+        /presentTimerStopTick\(rt\)[\s\S]{0,60}?rt\.timer = null/.test(src)],
+    ['计时点数字暂停 / 继续，点 ↺ 归零（不重开放映）',
+      /timerText\.addEventListener\('click', function \(\) \{ presentTimerToggle\(rt\) \}\)/.test(src) &&
+        /timerReset\.addEventListener\('click', function \(\) \{ presentTimerReset\(rt\) \}\)/.test(src)],
+    ['计时导出齐（自测可驱动格式与暂停 / 归零）',
+      typeof bundle.__presentTimerText === 'function' &&
+        typeof bundle.__presentTimerToggle === 'function' &&
+        typeof bundle.__presentTimerReset === 'function'],
+    ['计时显示 mm:ss，超一小时才显示 h:mm:ss',
+      bundle.__presentTimerText({ timer: { elapsed: 5000, since: 0, paused: true } }) === '00:05' &&
+        bundle.__presentTimerText({ timer: { elapsed: 65000, since: 0, paused: true } }) === '01:05' &&
+        bundle.__presentTimerText({ timer: { elapsed: 3725000, since: 0, paused: true } }) === '1:02:05' &&
+        bundle.__presentTimerText({ timer: null }) === '00:00'],
+    ['计时暂停后不再走表（elapsed 冻住）',
+      (function () {
+        const rt = { nodes: { timerText: { textContent: '', className: '' } },
+          timer: { elapsed: 60000, since: 0, paused: true } };
+        const frozen = bundle.__presentTimerText(rt);
+        bundle.__presentTimerToggle(rt);   // 暂停中 -> 继续
+        return frozen === '01:00' && rt.timer.paused === false && rt.timer.since > 0;
+      })()],
+    ['计时归零后从 00:00 重新走',
+      (function () {
+        const rt = { nodes: { timerText: { textContent: '', className: '' } },
+          timer: { elapsed: 90000, since: 0, paused: true } };
+        bundle.__presentTimerReset(rt);
+        return rt.timer.elapsed === 0 && bundle.__presentTimerText(rt) === '00:00';
+      })()],
+    ['底部两个圆钮接翻页，且首末页置灰',
+      /btnPrev\.addEventListener\('click', function \(\) \{ presentStep\(-1\) \}\)/.test(src) &&
+        /nodes\.footPrev\.disabled = rt\.key\.page <= 1/.test(src) &&
+        /nodes\.footNext\.disabled = rt\.key\.page >= rt\.key\.total/.test(src)],
+    ['上一页/下一页仍由头部按钮驱动（新翻页条只是多一条路）',
+      /var btnPrev = presentNode\('button', 'ml-present-btn', '←'\)/.test(src) &&
+        /var btnNext = presentNode\('button', 'ml-present-btn', '→'\)/.test(src)],
+    ['旧的「当前页」小标题已撤（当前页靠大图 + 底部页码标识，不重复写）',
+      !src.includes("var curCap = presentNode('div', 'ml-present-cap', '当前页')")],
+  ]
+  for (const [label, passed] of uiChecks) passed ? ok(label) : bad(label)
+
+  // 观众页地址的 origin：桌面版主窗是 dsh-app://app（自定义协议），拿它拼地址会被宿主
+  // 的 setWindowOpenHandler 直接 deny —— 必须取宿主 http host 的真实 origin。
+  const savedWindow = globalThis.window
+  const originChecks = []
+  try {
+    globalThis.window = { location: undefined }
+    originChecks.push(['没有宿主信息时拿不到 origin（不会拼出坏地址）', bundle.__presentAudienceOrigin() === ''])
+
+    globalThis.window = {
+      __DSH_TRANSPORT__: { ownsHost: true, streamBaseUrl: 'http://127.0.0.1:55713/' },
+      location: { origin: 'dsh-app://app' }
+    }
+    originChecks.push(['桌面版取宿主 http host（优先于 dsh-app:// 的 location.origin）',
+      bundle.__presentAudienceOrigin() === 'http://127.0.0.1:55713'])
+
+    globalThis.window = { location: { origin: 'http://localhost:3000' } }
+    originChecks.push(['纯浏览器里退化到 location.origin',
+      bundle.__presentAudienceOrigin() === 'http://localhost:3000'])
+
+    globalThis.window = { location: { origin: 'dsh-app://app' } }
+    originChecks.push(['只有自定义协议时返回空（不硬拼 dsh-app:// 让宿主 deny）',
+      bundle.__presentAudienceOrigin() === ''])
+  } finally {
+    globalThis.window = savedWindow
+  }
+  for (const [label, passed] of originChecks) passed ? ok(label) : bad(label)
+
+  // 拿不到 http 地址时不能闷着不响：要把能用的地址写进状态栏，用户手抄也能看。
+  const noticeChecks = [
+    ['拿不到宿主地址时把观众页地址明说出来',
+      /function openPresentAudience\(rt\)[\s\S]{0,400}?拿不到宿主的 http 地址[\s\S]{0,200}?noticeOk: false/.test(src)],
+    ['桌面版交出去之后拿不到窗口引用，也要说一声（不静默）',
+      /if \(!opened\)[\s\S]{0,200}?交给系统浏览器打开/.test(src)],
+    ['presentAudienceOrigin 导出可测', typeof bundle.__presentAudienceOrigin === 'function']
+  ]
+  for (const [label, passed] of noticeChecks) passed ? ok(label) : bad(label)
+
+  // ---- 整本预热：纯函数 + 接线 ----
+  // 答辩现场最怕「跳到第 20 页 → 现场跑 pdftoppm → 一秒白屏」，
+  // 所以开放映后自动把 1..N 页按当前 DPI 全渲染一遍。这里只测纯函数与接线。
+  const warmView = bundle.__presentWarmView
+  const warmChecks = [
+    ['没跑过也不显示（进度条默认隐藏）', warmView(null, null) === null],
+    ['在跑时显示 done/total', (() => {
+      const v = warmView({ total: 34, done: 12, failed: 0, next: 13, cancelled: false }, null)
+      return v && v.text.includes('12/34') && v.width === Math.round((12 / 34) * 100)
+    })()],
+    ['跑完显示总页数（绿色）', (() => {
+      const v = warmView(null, { total: 34, failed: 0 })
+      return v && v.text.includes('34') && v.cls === 'ml-present-warm-ok' && v.width === 100
+    })()],
+    ['有失败页就报失败（红色，不谎报成功）', (() => {
+      const v = warmView(null, { total: 34, failed: 2 })
+      return v && v.text.includes('2') && v.cls === 'ml-present-warm-bad'
+    })()],
+    ['进度条宽度封顶 100', warmView({ total: 4, done: 9, failed: 0 }, null).width === 100],
+    ['并发 3 路（每页一个 pdftoppm，再高互相拖慢）', bundle.__PRESENT_WARM_CONCURRENCY === 3],
+    ['开放映后自动预热', /presentWarmStart\(rt\)\n    }/.test(src) || /function openPresent\(\)[\s\S]{0,2200}?presentWarmStart\(rt\)/.test(src)],
+    ['退出放映会掐掉在跑的预热', /presentWarmCancel\(rt\)[\s\S]{0,80}?publishPresentStop/.test(src)],
+    ['换 DPI 后重跑预热（缓存键含 dpi）',
+      /presentDpi: wanted[\s\S]{0,900}?presentWarmStart\(rt\)/.test(src)],
+    ['重编译后重跑预热（缓存键含 mtime）',
+      /revChanged[\s\S]{0,300}?presentWarmStart\(rt\)/.test(src)],
+    ['取消时掐掉在飞的请求（不白烧 CPU 落没人要的档位）',
+      /\.abort\.abort\(\)/.test(src) && /name === 'AbortError'/.test(src)],
+    ['预热走 presentImageUrl（和放映取图同一份缓存键）',
+      /function presentWarmStart\(rt\)[\s\S]{0,1400}?presentImageUrl\(rt, page\)/.test(src)],
+    ['进度条点一下能重跑', /warm\.addEventListener\('click'[\s\S]{0,80}?presentWarmStart\(rt\)/.test(src)],
+    ['导出接线齐（自测可驱动）', typeof bundle.__presentWarmStart === 'function'
+      && typeof bundle.__presentWarmCancel === 'function' && typeof bundle.__presentWarmView === 'function']
+  ]
+  for (const [label, passed] of warmChecks) passed ? ok(label) : bad(label)
+} catch (error) {
+  bad('投屏讲解测试抛错', String(error.message))
+}
+
 
 console.log(failures === 0 ? '\n全部通过' : `\n失败 ${failures} 项`)
 process.exit(failures === 0 ? 0 : 1)

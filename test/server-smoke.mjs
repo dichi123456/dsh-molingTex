@@ -9,14 +9,22 @@
  *
  *   node test/server-smoke.mjs
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
-import { API_PREFIX, createPanelHandler } from '../lib/server.js'
+import { API_PREFIX, createPanelHandler, isCompletePng, trimPdfCache } from '../lib/server.js'
+import { PRESENT_PREFIX, createPresentHandler } from '../lib/present.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
+
+/** 手里这份 bytes 是不是一张写完了的 PNG（魔数 + 尾部 IEND）。 */
+function looksCompletePng(bytes) {
+  if (!bytes || bytes.length < 400) return false
+  if (bytes.slice(0, 8).toString('hex') !== '89504e470d0a1a0a') return false
+  return bytes.slice(Math.max(0, bytes.length - 64)).indexOf('IEND') >= 0
+}
 const fixtures = join(here, 'fixtures')
 
 let failures = 0
@@ -52,6 +60,32 @@ async function call(method, endpoint, body, raw) {
   try { json = JSON.parse(text) } catch { json = null }
   return { status: captured.status, json, raw: text, bytes, type: captured.type }
 }
+
+/** 同上，但打观众页那条前缀（/moling/present/…），没有 { ok, value } 信封。 */
+async function callPresent(method, sub, body) {
+  const payload = body === undefined ? Buffer.from('', 'utf8') : Buffer.from(JSON.stringify(body), 'utf8')
+  const req = Readable.from(payload.length > 0 ? [payload] : [])
+  req.method = method
+  req.url = PRESENT_PREFIX + (sub ? '/' + sub : '')
+
+  const captured = { status: 0, chunks: [], type: '', headers: {} }
+  const res = {
+    writeHead(status, headers) {
+      captured.status = status
+      captured.headers = headers || {}
+      captured.type = (headers && (headers['content-type'] || headers['Content-Type'])) || ''
+    },
+    end(chunk) { if (chunk !== undefined) captured.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8')) }
+  }
+  await present(req, res)
+  const bytes = Buffer.concat(captured.chunks)
+  const text = bytes.toString('utf8')
+  let json = null
+  try { json = JSON.parse(text) } catch { json = null }
+  return { status: captured.status, json, raw: text, bytes, type: captured.type, headers: captured.headers }
+}
+
+const present = createPresentHandler()
 
 console.log('1) 探活 / 状态 / 工作区')
 {
@@ -248,6 +282,51 @@ console.log('5) 编译 → PDF → 清理')
 
     const sameAgain = await call('GET', 'pdf-page' + query + '&dpi=48')
     sameAgain.bytes.equals(low.bytes) ? ok('同参数命中缓存且结果一致') : bad('缓存结果不一致')
+
+    // 并发打同一张「还没缓存」的图：旧代码是 pdftoppm 直接往 <key>.png 原地写，另一个请求
+    // stat 到「文件已存在」就读，读到半截 PNG —— 浏览器不报错，只画出上半页、下半截黑
+    // （用户报的「投屏只刷新出部分页面」）。现在改为在途去重 + 写 .tmp 再原子改名，
+    // 每一份回来的字节都必须自带 IEND 且完全一致。
+    const raceDpi = 137
+    const raceQuery = query + '&dpi=' + raceDpi
+    const raced = await Promise.all(Array.from({ length: 8 }, () => call('GET', 'pdf-page' + raceQuery)))
+    const racedBad = raced.filter((r) => !looksCompletePng(r.bytes)).length
+    const racedAllSame = raced.every((r) => r.bytes.equals(raced[0].bytes))
+    racedBad === 0 && racedAllSame && raced[0].bytes.length > 400
+      ? ok('并发取同一页都是完整 PNG（在途去重 + 原子改名）', `8 路 · 全一致 ${raced[0].bytes.length} 字节`)
+      : bad('并发取图出现残图', `坏 ${racedBad}/8 · 一致=${racedAllSame}`)
+
+    // 完整性判定本身：截断的 PNG 必须判成「没写完」，否则半截文件会被当缓存一直喂给浏览器
+    const stamp0 = Date.now()
+    const wholeFile = join(tmpdir(), 'ml-whole-' + stamp0 + '.png')
+    const cutFile = join(tmpdir(), 'ml-cut-' + stamp0 + '.png')
+    writeFileSync(wholeFile, low.bytes)
+    writeFileSync(cutFile, low.bytes.slice(0, Math.max(16, Math.floor(low.bytes.length / 2))))
+    const wholeOk = isCompletePng(wholeFile)
+    const cutOk = isCompletePng(cutFile)
+    const missingOk = isCompletePng(join(tmpdir(), 'ml-none-' + stamp0 + '.png'))
+    try { rmSync(wholeFile, { force: true }) } catch { /* 临时文件 */ }
+    try { rmSync(cutFile, { force: true }) } catch { /* 临时文件 */ }
+    wholeOk === true && cutOk === false && missingOk === false
+      ? ok('完整性校验：完整判真，截断/缺失判假')
+      : bad('完整性校验结论不对', `whole=${wholeOk} cut=${cutOk} missing=${missingOk}`)
+
+    // 缓存不会自己变小：键里带 PDF mtime，每编译一次整批作废，旧的留着就能攒到 GB 级
+    // （用户机器实测 2.3 万个 PNG / 1.29GB）。按 mtime 从旧到新删到低水位。
+    const trimDir = mkdtempSync(join(tmpdir(), 'ml-trim-'))
+    const now = Date.now()
+    for (let i = 0; i < 6; i++) {
+      const file = join(trimDir, 'p' + i + '.png')
+      writeFileSync(file, Buffer.alloc(100 * 1024, i))
+      const stamp = new Date(now - (6 - i) * 60000)
+      try { utimesSync(file, stamp, stamp) } catch { /* 有些文件系统不支持 */ }
+    }
+    const trimReport = trimPdfCache(250 * 1024, trimDir)
+    const leftNames = readdirSync(trimDir).sort()
+    try { rmSync(trimDir, { recursive: true, force: true }) } catch { /* 临时目录 */ }
+    trimReport.kept === 2 && leftNames.join(',') === 'p4.png,p5.png'
+      ? ok('缓存超上限按 mtime 从旧到新删到低水位', `删 ${trimReport.removed} 个 / 释放 ${Math.round(trimReport.freed / 1024)}KB / 留最新的`)
+      : bad('缓存清理不对', `kept=${trimReport.kept} left=${leftNames.join(',')}`)
 
     const wrongPage = await call('GET', 'pdf-page' + query.replace('page=1', 'page=999'))
     wrongPage.status >= 400 && wrongPage.json && wrongPage.json.ok === false ? ok('不存在的页报错') : bad('越界页码未报错', String(wrongPage.status))
@@ -512,6 +591,89 @@ console.log('10) 模板库（templates / use-template）')
     : bad('越界 root 没挡住', JSON.stringify(outside.json).slice(0, 160))
 
   rmSync(dir, { recursive: true, force: true })
+}
+
+console.log('15) 投屏观众页（/moling/present 中转）')
+{
+  const page = await callPresent('GET', '')
+  page.status === 200 && /text\/html/.test(page.type)
+    ? ok('GET /moling/present 发观众页', page.type)
+    : bad('观众页没发出来', page.status + ' ' + page.type)
+  page.raw.includes('id="cur"') && page.raw.includes('id="poster"') && page.raw.includes('id="start"')
+    ? ok('观众页有当前页图 / 开场遮罩 / 开始按钮')
+    : bad('观众页缺关键节点', page.raw.slice(0, 200))
+  page.raw.includes(API_PREFIX + '/pdf-page')
+    ? ok('观众页取图走插件的单页栅格化端点')
+    : bad('观众页没接 pdf-page', page.raw.slice(0, 200))
+  page.raw.includes('requestFullscreen')
+    ? ok('观众页自己请求全屏（浏览器要求该窗自身手势）')
+    : bad('观众页没有 requestFullscreen')
+  page.raw.includes('id="hint"') && page.raw.includes('点一下画面即可全屏')
+    ? ok('进全屏后给一条常驻提示（不必猜）')
+    : bad('观众页没有全屏提示条')
+  const clickTakesFullscreen = page.raw.indexOf('sawLive && !inFullscreen()') >= 0 && page.raw.indexOf('begin(); if (!fsFail) return') >= 0
+  clickTakesFullscreen
+    ? ok('放映中还没全屏时，整页点击先拿去进全屏（不误翻页）')
+    : bad('整页点击没接管进全屏', page.raw.slice(0, 200))
+  page.raw.includes('fullscreenchange') && page.raw.includes('整页任意处点一下就能进全屏')
+    ? ok('全屏状态变化后重算提示 + 开场文案已放宽到整页点击')
+    : bad('全屏状态没接或文案没改')
+  page.raw.includes(PRESENT_PREFIX + '/state') && page.raw.includes(PRESENT_PREFIX + '/key')
+    ? ok('观众页把状态/按键接到本前缀')
+    : bad('观众页没接中转端点', page.raw.slice(0, 300))
+
+  const empty = await callPresent('GET', 'state')
+  empty.json && empty.json.value && empty.json.value.live === false && empty.json.value.page === 1
+    ? ok('没推过状态时 live:false + 第 1 页（观众页显示「等待放映」）')
+    : bad('空状态不对', JSON.stringify(empty.json).slice(0, 160))
+
+  await callPresent('POST', 'state', {
+    root: fixtures, path: 'hello-en.pdf', rev: '42', dpi: 144, title: 'hello-en.pdf',
+    page: 2, total: 9, black: false, white: false, badge: true, live: true
+  })
+  const pushed = await callPresent('GET', 'state')
+  const pv = pushed.json && pushed.json.value
+  pv && pv.page === 2 && pv.total === 9 && pv.stale === false
+    ? ok('主窗推状态，观众页读回来一致', JSON.stringify(pushed.json).slice(0, 120))
+    : bad('状态没存住', JSON.stringify(pushed.json).slice(0, 200))
+  pv && pv.badge === true && pv.dpi === 144
+    ? ok('页码角标与清晰度一起带过去')
+    : bad('badge/dpi 丢了', JSON.stringify(pushed.json).slice(0, 160))
+
+  await callPresent('POST', 'state', { page: 3, total: 9, black: true, live: true })
+  const blacked = await callPresent('GET', 'state')
+  blacked.json && blacked.json.value && blacked.json.value.black === true && blacked.json.value.page === 3
+    ? ok('黑屏开关跟着状态走')
+    : bad('黑屏没生效', JSON.stringify(blacked.json).slice(0, 160))
+
+  await callPresent('POST', 'key', { key: 'ArrowRight', at: 1712345678000 })
+  await callPresent('POST', 'key', { key: 'Shift+ArrowLeft', at: 1712345678001 })
+  const drained = await callPresent('GET', 'key')
+  const dk = drained.json && drained.json.value && drained.json.value.keys
+  Array.isArray(dk) && dk.length === 2 && dk[0] === 'ArrowRight' && dk[1] === 'Shift+ArrowLeft'
+    ? ok('观众页推的按键按顺序取到')
+    : bad('按键队列不对', JSON.stringify(drained.json).slice(0, 200))
+  const again = await callPresent('GET', 'key')
+  const ak = again.json && again.json.value && again.json.value.keys
+  Array.isArray(ak) && ak.length === 0
+    ? ok('取走后就排空（不会重复翻页）')
+    : bad('按键没排空', JSON.stringify(again.json).slice(0, 160))
+
+  await callPresent('POST', 'state', { page: 3, total: 9, live: false })
+  const stopped = await callPresent('GET', 'state')
+  stopped.json && stopped.json.value && stopped.json.value.live === false
+    ? ok('收摊时 live:false（观众页回到等待放映）')
+    : bad('live:false 没写进去', JSON.stringify(stopped.json).slice(0, 160))
+
+  const missing = await callPresent('GET', 'nope')
+  missing.status === 404
+    ? ok('未知子路径 404')
+    : bad('未知子路径没 404', String(missing.status))
+
+  // 观众页不能被缓存：主窗换 PDF / 改 dpi 后要立刻生效
+  const noStore = await callPresent('GET', 'state')
+  var noStoreHeader = String(noStore.headers['cache-control'] || noStore.headers['Cache-Control'])
+  noStoreHeader.indexOf('no-store') >= 0 ? ok('中转接口不缓存（no-store）') : bad('状态接口没标 no-store', JSON.stringify(noStore.headers))
 }
 
 // 收尾
