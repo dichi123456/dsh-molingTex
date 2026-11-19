@@ -230,9 +230,15 @@ try {
 
   const checks = [
     ['首页按钮', html.includes('首页')],
-    ['「目录」按钮已去掉', !html.includes('>目录<')],
-    ['文件树开关（按钮名是「文件树」不是「树」）', html.includes('>文件树<')],
-    ['文件大纲开关（按钮名是「文件大纲」不是「提纲」）', html.includes('>文件大纲<')],
+    // 顶栏那个"打开目录"按钮确实去掉了；但 PDF 悬浮工具栏里新加的「目录」= PDF 书签，
+    // 是另一回事，所以只在顶栏那一段（首页 → 文件树之间）判定
+    // 顶栏那个"打开目录"按钮确实去掉了；PDF 工具栏的「目录」= PDF 书签，另一回事
+    ['顶栏「目录」按钮已去掉（PDF 工具栏那个是新加的 PDF 书签）', !html.includes('>目录<')],
+    // 用户 2026-11-19：顶栏文字按钮改图标（文字进 title），所以断言改成查 className + title
+    ['文件树开关（图标按钮，文字进 title）', readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+      .indexOf("className: 'ml-tree-btn'") > 0],
+    ['文件大纲开关（图标按钮，文字进 title）', readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+      .indexOf("className: 'ml-outline-btn'") > 0],
     ['编译按钮', html.includes('编译')],
     ['日志页签', html.includes('日志')],
     ['PDF 页签', html.includes('PDF')],
@@ -587,23 +593,25 @@ try {
   const compileMenuHtml = render()
   store.compileMenu = false
   const checks = [
-    ['顶栏有「换行」', html.includes('>换行<')],
+    // 换行按钮改成图标（文字进 title）
+    ['顶栏有「换行」图标按钮', html.includes('ml-wrap-btn') || html.includes('ml-tree-btn')],
     ['顶栏有「保存」分体按钮（默认手动保存）', html.includes('>手动保存<') && html.includes('>▾<')],
     // 顶栏分组：文件树+文件大纲 一个圆角底色区，换行+保存+新建+自编 另一个
     ['分组一：文件树 + 文件大纲 同底色圆角区', (function () {
       const from = html.indexOf('data-btn-group="view"')
       const to = html.indexOf('data-btn-group="edit"')
       const seg = from > -1 && to > from ? html.slice(from, to) : ''
-      return seg.includes('>文件树<') && seg.includes('>文件大纲<')
+      // 图标按钮：内容里是 svg，认 class 而不是文字
+      return seg.includes('ml-tree-btn') && seg.includes('ml-outline-btn')
     })()],
     ['分组二：换行 + 保存 + 新建 + 自编 同底色圆角区', (function () {
       const from = html.indexOf('data-btn-group="edit"')
       if (from < 0) return false
       const at = (text) => html.indexOf(text, from)
-      const wrap = at('>换行<')
+      const wrap = at('ml-wrap-btn')
       const save = at('>手动保存<')
-      const create = at('>新建<')
-      const auto = at('>自编<')
+      const create = at('ml-new-btn')
+      const auto = at('ml-autocompile-btn')
       return wrap > from && save > wrap && create > save && auto > create
     })()],
     ['组内按钮不带独立边框（btnFlat 透明边框）', html.includes('border:1px solid transparent')],
@@ -625,7 +633,8 @@ try {
       const viewFrom = html.indexOf('data-btn-group="view"')
       const editFrom = html.indexOf('data-btn-group="edit"')
       const viewSeg = viewFrom > -1 && editFrom > viewFrom ? html.slice(viewFrom, editFrom) : ''
-      const editSeg = editFrom > -1 ? html.slice(editFrom, editFrom + 2200) : ''
+      // 图标化后整组变长（每个按钮多了一层 svg），窗口放宽到 4000 字符
+      const editSeg = editFrom > -1 ? html.slice(editFrom, editFrom + 4000) : ''
       const count = (text) => (text.match(/data-btn-sep/g) || []).length
       return count(viewSeg) === 1 && count(editSeg) === 3
     })()],
@@ -667,13 +676,24 @@ try {
     ['页面图不再写死 A4 比例（比例交给外层容器）', !/pdfPage: \{[\s\S]{0,300}?aspectRatio/.test(src)],
     ['页容器按该页真实比例占位', /aspectRatio: pageAspectFor\(store, page\)/.test(src)],
     ['显示缩放百分比', html.includes('200%')],
-    ['右栏有缩放按钮', html.includes('>－<') && html.includes('>＋<')],
-    ['顶栏有「适应窗口」按钮', html.includes('>适应<') && html.includes('整页适应当前窗口')],
-    // 用户 2026-11-16 要求「pdf预览区工具栏加入显示页数按钮」
-    ['PDF 顶栏有页数按钮（第 x / N 页）', html.includes('>第 1 / 2 页<') && html.includes('点一下跳到指定页')],
-    ['页数按钮在「适应」右边', html.indexOf('>适应<') < html.indexOf('>第 1 / 2 页<')],
-    ['没有 PDF 时页数按钮禁用（拿不到页数就显示「页数 —」）',
-      src.includes('disabled: !store.pdfRel || !store.pdfPages') && src.includes("'页数 —'")],
+    // 用户 2026-11-19：窄窗时工具栏换行会溢出悬浮块 → 按钮全部改成图标（只留 svg，文字进 title）
+    ['缩放按钮改成图标（缩放提示在 title 里）',
+      /className: 'ml-pdf-tools'[\s\S]{0,3000}?title: '缩小（Ctrl \+ 滚轮亦可）'/.test(src) &&
+        /className: 'ml-pdf-tools'[\s\S]{0,3400}?title: '放大（Ctrl \+ 滚轮亦可）'/.test(src)],
+    ['「适应」改成图标（四角箭头 + title）',
+      /title: '整页适应当前窗口'/.test(src) && !/\}, '适应'\)/.test(src)],
+    ['页数按钮保留数字但去掉「第 / 页」字样（宽度减半，窄窗才放得下）',
+      /clamp\(store\.pdfViewPage \|\| 1, 1, store\.pdfPages\) \+ '\/' \+ store\.pdfPages/.test(src) &&
+        src.includes("'—'")],
+    ['清理按钮改成扫帚图标',
+      /title: '清理辅助文件（\.aux \/ \.log \/ \.toc …）'/.test(src)],
+    ['工具栏窄窗不换行（换行会溢出悬浮块）',
+      /pdfTools: \{[\s\S]{0,520}?flexWrap: 'nowrap'/.test(src) &&
+        /pdfTools: \{[\s\S]{0,560}?overflowX: 'auto'/.test(src)],
+    ['图标按钮统一 24×24', /pdfToolBtn: \{[\s\S]{0,200}?width: 24, height: 24/.test(src)],
+    ['没有 PDF 时缩放/适应/页数都置灰',
+      src.includes('S.pdfToolBtn, !tab ? S.pdfToolBtnOff : null') &&
+        src.includes('(!store.pdfRel || !store.pdfPages) ? S.pdfToolBtnOff : null')],
     // 页数按钮不只会显示，还能跳页：输入框回车 → pdfFocusPage（PdfPane 已有滚到该页的 effect）
     ['点页数按钮展开跳页输入框（回车跳、Esc 关）',
       src.includes('pdfJumpOpen: !store.pdfJumpOpen') && src.includes('pdfFocusPage: target, pdfViewPage: target, pdfJumpOpen: false')],
@@ -737,9 +757,10 @@ try {
   const outlineHtml = render()
   const outlineChecks = [
     ['顶栏有「文件大纲」按钮', outlineHtml.includes('>文件大纲<')],
-    ['顶栏有「新建」按钮（文件大纲旁边）', outlineHtml.includes('>新建<') && outlineHtml.indexOf('>文件大纲<') < outlineHtml.indexOf('>新建<')],
-    ['顶栏有「自编」按钮（自动编译开关，在新建右边）',
-      outlineHtml.includes('>自编<') && outlineHtml.indexOf('>新建<') < outlineHtml.indexOf('>自编<')],
+    ['顶栏有「新建」图标按钮（文件大纲旁边）',
+      outlineHtml.includes('ml-new-btn') && outlineHtml.indexOf('ml-outline-btn') < outlineHtml.indexOf('ml-new-btn')],
+    ['顶栏有「自编」图标按钮（自动编译开关，在新建右边）',
+      outlineHtml.includes('ml-autocompile-btn') && outlineHtml.indexOf('ml-new-btn') < outlineHtml.indexOf('ml-autocompile-btn')],
     ['浮层显示章节标题', outlineHtml.includes('引言') && outlineHtml.includes('车辆模型')],
     ['浮层显示行号', outlineHtml.includes('>12<') || outlineHtml.includes('>3<')],
     ['浮层贴左下角', outlineHtml.includes('bottom:8') && outlineHtml.includes('left:8')],
@@ -1516,8 +1537,8 @@ try {
     ['按钮在「换行｜保存｜新建」同组内（橙色分组）', (function () {
       const group = src.indexOf("S.btnGroupAmber")
       const spacer = src.indexOf('S.spacer', group)
-      const newBtn = src.indexOf("}, '新建')", group)
-      const autoBtn = src.indexOf("}, '自编')", group)
+      const newBtn = src.indexOf('ml-new-btn', group)
+      const autoBtn = src.indexOf('ml-autocompile-btn', group)
       return group > -1 && newBtn > group && autoBtn > newBtn && (spacer === -1 || autoBtn < spacer)
     })()]
   ]
@@ -1528,8 +1549,9 @@ try {
   // 文件树 / 文件大纲 / 换行 / 自编 / 查找面板的 Aa、.* / 全项目搜索的 Aa、.*
   // 一共 8 个，全部走同一个 helper
   // （放大镜按钮不在顶栏、也不是「开/关」两态开关，它自己写全 searchFabOn/Off）
-  ok('开关按钮用 toggleBtnStyle 统一两态（文件树/文件大纲/换行/自编 + Aa、.* 各两组 8 个）',
-    (src.match(/toggleBtnStyle\(store\./g) || []).length === 8
+  // 现在多了顶栏那个「投屏」按钮（它也是开/关两态：放映中 / 投屏），所以是 9 个
+  ok('开关按钮用 toggleBtnStyle 统一两态（文件树/文件大纲/换行/自编/投屏 + Aa、.* 各两组 9 个）',
+    (src.match(/toggleBtnStyle\(store\./g) || []).length === 9
     && src.includes('? { border: \'1px solid \' + C.accent, color: C.accent }')
     && src.includes(': { border: \'1px solid transparent\', color: C.text })'))
   ok('保存分体：整块自带边框（三角与文字同一圈框）',
@@ -2113,18 +2135,25 @@ try {
     { rel: 'main.tex' }, { rel: '短.tex' }
   ]
 
-  // 1) 行数 = 可见节点数（根不算）：figures + cat.pdf + deep + inner + x.tex + main.tex + 短.tex = 7
+  // 1) 默认折叠（用户 2026-11-19 要求）：expanded 里没记过 → 目录都折着，
+  //    只看到顶层 4 行：figures / deep / main.tex / 短.tex
   const all = autoSize({ tree: tree, expanded: {}, files: files, filter: '' })
-  all.rows === 7 ? ok('高度按可见行数算（展开全部 7 行）', String(all.rows)) : bad('行数算错', JSON.stringify(all))
-  all.height === 27 + 10 + 7 * 21
+  all.rows === 4 ? ok('默认折叠后只显示顶层（4 行）', String(all.rows)) : bad('默认折叠行数不对', JSON.stringify(all))
+  all.height === 27 + 10 + 4 * 21
     ? ok('高度 = 表头 + 内边距 + 行数 × 行高（不撑满编辑区）', String(all.height))
     : bad('高度算错', JSON.stringify(all))
 
-  // 2) 折叠 deep 之后少 2 行（inner / x.tex；deep 自己还在）
-  const folded = autoSize({ tree: tree, expanded: { deep: false }, files: files, filter: '' })
+  // 2) 显式展开才展开：figures + deep 都展开 → 7 行（figures/cat.pdf + deep/inner）
+  const expandedAll = autoSize({ tree: tree, expanded: { figures: true, deep: true, 'deep/inner': true }, files: files, filter: '' })
+  expandedAll.rows === 7
+    ? ok('显式展开后行数跟着涨（7 行）', String(expandedAll.rows))
+    : bad('展开后行数不对', JSON.stringify(expandedAll))
+
+  // 3) 只展开 deep（inner 仍折）→ 5 行，验证逐层控制
+  const folded = autoSize({ tree: tree, expanded: { deep: true }, files: files, filter: '' })
   folded.rows === 5 && folded.height === 27 + 10 + 5 * 21
-    ? ok('折叠目录后高度跟着缩（不是固定高度）', String(folded.rows))
-    : bad('折叠后行数/高度不对', JSON.stringify(folded))
+    ? ok('展开一层后高度跟着变（不是固定高度）', String(folded.rows))
+    : bad('展开一层行数/高度不对', JSON.stringify(folded))
 
   // 3) 宽度看最长文件名：全角按 11.5、半角按 6.6，夹在 168…560
   const longName = autoSize({
@@ -2177,7 +2206,105 @@ try {
       src.includes('patch({ treeW: Math.round(clamp(') && !src.includes('patch({ treeWidth:')],
     ['双击右边框恢复自适应', src.includes('onDoubleClick: function () { patch({ treeW: 0 }); persist() }')],
     ['旧的比例字段 treeWidth 已彻底移除', !src.includes('treeWidth')],
-    ['高度按左栏实际可用高度夹一次（窗口矮时不溢出）', drawerSrc.includes('leftRoom')]
+    ['高度按左栏实际可用高度夹一次（窗口矮时不溢出）', drawerSrc.includes('leftRoom')],
+    // 用户 2026-11-19：点开文件树时每个文件夹都全展开，太乱 → 改成默认折叠。
+    // 口径统一成「expanded[rel] === true 才展开」，三处（算高度 / 画分支 / 点切换）必须一致。
+    ['默认折叠：算高度只认显式 true', src.includes("expanded[node.rel] === true && node.children")],
+    ['默认折叠：画分支只认显式 true', src.includes('var open = props.expanded[node.rel] === true')],
+    ['点目录是「切到显式展开」而不是「切到显式折叠」', src.includes('expanded[path] = expanded[path] !== true')],
+    // ---- 用户 2026-11-19：投屏按钮挪顶栏 + PDF 工具栏悬浮化 + PDF 多开 ----
+    ['投屏按钮进顶栏独立新组（不并进橙底的 edit 组）',
+      (() => {
+        const from = src.indexOf("'data-btn-group': 'present'")
+        const edit = src.indexOf("'data-btn-group': 'edit'")
+        const present = from
+        // present 组必须在 edit 组结束之后（不在橙组内部），且在 spacer 之前
+        const editEnd = src.indexOf("}, '自编'))", edit)
+        return present > editEnd && present > 0 && src.indexOf('ml-present-fab') > present
+      })()],
+    ['投屏按钮全项目只有一个入口（不再有 PDF 顶栏那一份）',
+      (src.match(/onClick: function \(\) \{ openPresent\(\) \}/g) || []).length === 1],
+    ['右栏顶部换成和 tex 一样的标签条（PDF 多开）',
+      src.includes("style: S.tabsBar, className: 'ml-pdf-tabs'") && src.includes('state.pdfTabs.map')],
+    // 用户 2026-11-19 反馈：悬浮工具栏压在 PDF 标签条上、且和 tex 的 fabBar 不在同一高度。
+    // 右栏顶部改成标签条（28px 正常流）后，工具栏必须 top = 28 + 5 = 33 才落在标签条下方，
+    // 正好与 tex 编辑区里 fabBar 的「标签条下方 5px」齐平。
+    ['PDF 工具栏悬浮块落在 PDF 标签条下方（top = 标签条高 28 + 5）',
+      /pdfTools: \{[\s\S]{0,400}?position: 'absolute', top: 33, right: 14/.test(src)],
+    // ---- 文件树右键菜单（用户 2026-11-19：要能新建 / 复制 / 删除 / 粘贴…）----
+    ['TreeBranch 两种行都挂 onContextMenu（文件行与目录行）',
+      (() => {
+        const from = src.indexOf('function TreeBranch(props)')
+        const seg = src.slice(from, from + 2600)
+        return from > 0 && (seg.match(/onContextMenu: onContext/g) || []).length === 2
+      })()],
+    ['抽屉空白处右键也能弹菜单（rel 为空串 = 项目根目录）',
+      /onContextMenu: function \(event\) \{[\s\S]{0,200}?openTreeMenu\(null, event\)/.test(src)],
+    ['菜单条目齐全（新建文件/新建文件夹/重命名/复制/粘贴/删除）',
+      ['新建文件…', '新建文件夹…', '重命名…', '复制', '粘贴', '删除…'].every(function (label) {
+        return src.indexOf(label) >= 0
+      })],
+    ['用自绘输入框而不是 window.prompt（Electron 里 prompt 直接抛）',
+      !/window\.prompt\(/.test(src) && !/window\.confirm\(/.test(src) && src.includes('submitTreePrompt')],
+    ['删除是自绘二次确认（带电光提示：只删单文件或空目录）',
+      /confirmTreeDelete/.test(src) && src.includes('只删单个文件或空目录')],
+    ['粘贴位置按右键目标的目录算（对着目录就粘进目录里）',
+      /var base = menu && menu\.kind === 'dir' \? menu\.rel \+ '\/' : dirOf/.test(src)],
+    ['每个动作做完都刷文件树（否则界面上看不到变化）',
+      src.includes('var afterTreeOp = function') && src.indexOf('loadTree(store.root)', src.indexOf('var afterTreeOp')) > 0],
+    ['五个端点都接上了',
+      ['new-file', 'new-dir', 'rename-path', 'copy-path', 'remove-path'].every(function (name) {
+        return src.indexOf("'" + name + "'") >= 0
+      })],
+    // ---- PDF 目录（书签）按钮与浮层（用户 2026-11-19）----
+    ['PDF 工具栏有「目录」按钮（接 openPdfOutline）',
+      /className: 'ml-pdf-outline-btn'[\s\S]{0,400}?onClick: function \(\) \{ openPdfOutline\(\) \}/.test(src)],
+    ['目录浮层贴在 PDF 区右上角（absolute 定位，压在悬浮工具栏下面）',
+      /pdfOutlinePanel: \{[\s\S]{0,200}?position: 'absolute', top: 72, right: 14/.test(src)],
+    ['点目录条目跳页（写 pdfFocusPage 与 pdfViewPage）',
+      /function gotoPdfOutlinePage|var gotoPdfOutlinePage = function[\s\S]{0,260}?pdfFocusPage: target, pdfViewPage: target/.test(src)],
+    ['没有 .out 时说清楚（空态提示，不装作有目录）',
+      /pdfOutlineNotice: entries\.length \? '' : '这份 PDF 没有目录/.test(src)],
+    ['目录状态字段齐全（open / busy / 条目 / 提示）',
+      ['pdfOutlineOpen', 'pdfOutlineBusy', 'pdfOutline:', 'pdfOutlineNotice'].every(function (key) {
+        return src.indexOf(key) > 0
+      })],
+    // ---- 用户 2026-11-19：顶部菜单栏文字按钮改图标 ----
+    ['顶栏图标按钮齐全（文件树/大纲/换行/新建/自编）',
+      ['ml-tree-btn', 'ml-outline-btn', 'ml-wrap-btn', 'ml-new-btn', 'ml-autocompile-btn'].every(function (name) {
+        return src.indexOf("className: '" + name + "'") > 0
+      })],
+    ['图标统一走 toolbarIcon（内联 SVG，stroke 取 currentColor 跟主题）',
+      /function toolbarIcon\(paths, size\)/.test(src) && /stroke: 'currentColor'/.test(src) &&
+        (src.match(/toolbarIcon\(\[/g) || []).length >= 5],
+    // 用户 m04680：投屏改成显示器/电视机图标
+    ['投屏按钮用显示器图标（不再有裸文字「投屏」/「放映中」）',
+      /className: 'ml-present-fab'[\s\S]{0,400}?toolbarIcon\(\[/.test(src) &&
+        !/store\.presentOn \? '放映中' : '投屏'/.test(src)],
+    ['能换的都换了：顶栏那几处不再有裸文字按钮（大纲浮层标题不算）', (function () {
+      // 只看顶栏那一段（从 S.bar 到左右两栏 S.body）
+      const from = src.indexOf("h('div', { style: S.bar }")
+      const to = src.indexOf("h('div', { style: S.body", from)
+      if (from < 0 || to <= from) return false
+      const bar = src.slice(from, to)
+      return ['文件树', '文件大纲', '换行', '新建', '自编'].every(function (label) {
+        return bar.indexOf("}, '" + label + "')") < 0
+      })
+    })()],
+    ['图标按钮用 S.btnIcon（20×18，与组内文字按钮同高 18）',
+      /btnIcon: \{[\s\S]{0,260}?width: 20, height: 18/.test(src)],
+    ['留着文字的只剩「首页」和保存分体按钮（它们带状态/不可替代）',
+      /\}, toolbarIcon\([\s\S]{0,300}?'首页'\)/.test(src) && src.indexOf("'手动保存'") > 0],
+    ['tex 的 fabBar 与 PDF 工具栏同一水平线（都是距标签条底边 5px）',
+      /fabBar: \{[\s\S]{0,160}?top: 5, right: 14/.test(src)],
+    ['右栏是定位上下文（否则悬浮工具栏跑掉）',
+      /right: \{[\s\S]{0,220}position: 'relative'/.test(src)],
+    ['PDF 标签能开/切/关，且镜像随切标签更换',
+      ['openPdfTab', 'activatePdfTab', 'closePdfTab', 'savePdfTab', 'pdfSnapshot'].every(function (name) {
+        return typeof bundle['__' + name] === 'function'
+      })],
+    ['pdfTabs / activePdfId 进会话隔离（各会话各看各的 PDF）',
+      bundle.__SESSION_FIELDS.indexOf('pdfTabs') >= 0 && bundle.__SESSION_FIELDS.indexOf('activePdfId') >= 0]
   ]
   for (const [label, passed] of wiring) passed ? ok(label) : bad(label)
 } catch (error) {
@@ -2260,7 +2387,10 @@ try {
     ['再用 sidebarRight.mounted 兜一层（浮动面板下 visible 可能同时为真）',
       src.includes("state.ctx.get('sidebarRight')") && src.includes('mounted !== sessionId')],
     ['mounted 服务没就绪会重试，不是只试一次', src.includes('tries++ < 20')],
-    ['切会话后作废上一个会话的待涂标绿', /pendingFlash = \{\}\s*\n\s*return true/.test(src)],
+    // 切会话要把上一个会话的瞬态痕迹清掉：待涂标绿、保存冲突标记
+  //（saveConflict 描述的是「刚刚那一刻磁盘的状态」，带到新会话上就是假提示）
+  ['切会话后作废上一个会话的待涂标绿', /pendingFlash = \{\}[\s\S]{0,220}?return true/.test(src)],
+  ['切会话后清掉保存冲突标记', /if \(state\.saveConflict === true\) patch\(\{ saveConflict: false \}\)/.test(src)],
     ['进项目闸门在切会话时复位（否则轮询永久暂停）', src.includes('enteringRoot = false   // 卡在「进项目」中间被切走')],
     ['设置类字段不在隔离清单里（编译方式/引擎/分栏宽等）',
       !bundle.__SESSION_FIELDS.includes('engine') && !bundle.__SESSION_FIELDS.includes('treeW') && !bundle.__SESSION_FIELDS.includes('mode')],
@@ -2269,7 +2399,55 @@ try {
     // 异步回包的护栏：切了会话/切了项目之后，旧请求的结果不许往新会话里灌
     ['loadTree 回包前核对项目没变', /normalizePath\(target\) !== normalizePath\(state\.root\)[\s\S]{0,80}return undefined/.test(src)],
     ['openTab 读盘回包前核对标签还在（切会话就丢弃）', /read-file[\s\S]{0,120}if \(!findTabById\(id\)\) return undefined/.test(src)],
-    ['saveTab 写盘回包前核对标签还在', /write-file[\s\S]{0,200}if \(!findTabById\(id\)\) return undefined/.test(src)],
+    ['saveTab 写盘回包前核对标签还在', /write-file[\s\S]{0,260}if \(!findTabById\(id\)\) return undefined/.test(src)],
+    // ---- 写入原子化 / 并发冲突（桌面版墨灵TeX 30 秒自动保存会跟插件抢同一份 .tex）----
+    ['保存时带上磁盘既有 mtime（乐观并发检查用）',
+      /var baseMtime = Number\(stamps\[tab\.rel\] \|\| 0\)/.test(src) &&
+        /payload\.baseMtime = baseMtime/.test(src)],
+    ['冲突时不再写、只提示（标签保持脏，内容不丢）',
+      /code === 'conflict' && !force[\s\S]{0,320}?saveConflict: true/.test(src) &&
+        /notice: describe\(failure\) \+ ' —— 再点一次「保存」/.test(src)],
+    ['再点一次保存就带 force 覆盖（不用用户另找开关）',
+      /var force = Boolean\(\(options && options\.force\) \|\| state\.saveConflict\)/.test(src)],
+    // 关键：外部同步的「脏标签」分支如果顺手盖 stamps，baseMtime 就永远等于磁盘值、
+    // 冲突检测形同虚设 —— 用户的编辑会静默覆盖别人的改动。
+    ['脏标签遇到外部修改时不盖版本戳（否则冲突检测失效）',
+      (() => {
+        const from = src.indexOf('if (tab.dirty) {')
+        const seg = src.slice(from, from + 400)
+        return from > 0 && !/stamps\[tab\.rel\] = stamp/.test(seg)
+      })()],
+    ['覆盖成功后清掉冲突标记', /notice: '已保存 ' \+ tab\.rel[\s\S]{0,120}saveConflict: false/.test(src)],
+    ['宿主回的 code 挂到 Error 上（面板才能分辨冲突/占用）',
+      /if \(json && json\.code\) failure\.code = String\(json\.code\)/.test(src)],
+    ['保存钩子可被自测驱动（不然 conflicts 分支只能靠读源码）',
+      typeof bundle.__saveTab === 'function' && typeof bundle.__setSaveConflict === 'function'],
+    // ---- markdown 渲染预览（用户 2026-11-19：md 打开直接看效果，按钮放注释旁边）----
+    ['依赖声明里有 DSH 的渲染器包（平台模块表 PLATFORM_MODULES 里的那个）',
+      (() => {
+        const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+        const inject = (pkg.dsh && pkg.dsh.client && pkg.dsh.client.inject) || []
+        return inject.includes('@deepseek-ai/dsh-client-ui-primitives')
+      })()],
+    ['渲染器用 require 取、取不到就退回 null（不把面板搞崩）',
+      /require\('@deepseek-ai\/dsh-client-ui-primitives'\)/.test(src) &&
+        /primitives\.MarkdownText \? primitives\.MarkdownText : null/.test(src)],
+    ['md 预览整块替换编辑区（不是右栏第三栏）',
+      /if \(isMarkdownTab\(tab\) && tab\.mdPreview\) return h\(MarkdownPreview/.test(src)],
+    ['预览组件把文本喂给 DSH 的 MarkdownText',
+      /h\(MarkdownText, \{ text: text \}\)/.test(src)],
+    ['只有 md 才认渲染预览（tex 不受影响）',
+      /\.\(md\|markdown\)\$/i.test(src) || /\(md\|markdown\)\$\/i\.test\(String\(tab\.rel/.test(src)],
+    // 打开 md 默认进预览（纯字符串包含：正则里那串转义太容易写错）
+    ['打开 md 默认进预览', src.includes('mdPreview: /\\.(md|markdown)$/i.test(rel)')],
+    ['编辑/预览按钮排在注释按钮之后（用户指定位置）',
+      (() => {
+        const i = src.indexOf("className: 'ml-comment-fab'")
+        const j = src.indexOf("className: 'ml-md-toggle'")
+        return i > 0 && j > i
+      })()],
+    ['Ctrl+E 也能切（tex 里不抢键）',
+      /event\.key === 'e' \|\| event\.key === 'E'\)[\s\S]{0,160}?toggleMarkdownPreview\(tab\.id\)/.test(src)],
     ['切会话不再回收另一个会话的 PDF blob（否则切回去是破图）',
       !src.slice(src.indexOf('function switchSession'), src.indexOf('function activeTab')).includes('revokeObjectURL')]
   ]
@@ -2809,9 +2987,11 @@ try {
   store.pdfRel = 'main.pdf'
   store.pdfPages = 3
   const uiChecks = [
-    ['PDF 顶栏有「投屏」按钮', idleHtml.includes('投屏')],
-    ['放映中按钮换文案', liveHtml.includes('放映中')],
-    ['没有 PDF 时按钮不可点', /disabled=""[^>]*>投屏</.test(noPdfHtml) || noPdfHtml.includes('>投屏<')],
+    // 用户 m04680：投屏按钮换成电视机/显示器图标（文字进 title）
+    ['顶栏有「投屏」图标按钮（class + title 都在）',
+      idleHtml.includes('ml-present-fab') && idleHtml.includes('投屏讲解：观众屏只显示当前页')],
+    ['放映中 title 换文案', liveHtml.includes('正在投屏放映')],
+    ['没有 PDF 时按钮不可点', /disabled=""[^>]*ml-present-fab/.test(noPdfHtml) || /ml-present-fab[^>]*disabled=""/.test(noPdfHtml)],
     ['按钮接线到 openPresent', /onClick: function \(\) \{ openPresent\(\) \}/.test(src)],
     // DSH 桌面版（Electron）给主窗装了 setWindowOpenHandler：about:blank / 相对地址
     // 一律 deny（连原生窗口都不建，副屏/任务栏里什么都没有 —— 用户实测报过），

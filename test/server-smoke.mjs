@@ -9,12 +9,14 @@
  *
  *   node test/server-smoke.mjs
  */
+import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { API_PREFIX, createPanelHandler, isCompletePng, trimPdfCache } from '../lib/server.js'
+import { detectTexLive, getEnginePath } from '../lib/latex.js'
 import { PRESENT_PREFIX, createPresentHandler } from '../lib/present.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -30,6 +32,7 @@ const fixtures = join(here, 'fixtures')
 let failures = 0
 const ok = (label, detail = '') => console.log(`  ✓ ${label}${detail ? ` — ${detail}` : ''}`)
 const bad = (label, detail = '') => { failures++; console.log(`  ✗ ${label}${detail ? ` — ${detail}` : ''}`) }
+const skip = (label) => console.log(`  – ${label}（跳过）`)
 
 const handler = createPanelHandler({
   getConfig: () => ({ allowedRoots: [fixtures] }),
@@ -38,7 +41,11 @@ const handler = createPanelHandler({
 })
 
 /** 发一个假请求；返回 { status, json, raw, bytes, type }。raw 用于故意发坏 JSON。 */
-async function call(method, endpoint, body, raw) {
+/**
+ * 对一个 handler 发一次假请求（call 与「临时目录专用 handler」共用这一段）。
+ * raw !== undefined 时原样发那段字节（用来测坏 JSON）。
+ */
+async function invoke(target, method, endpoint, body, raw) {
   const payload = raw !== undefined ? Buffer.from(String(raw), 'utf8')
     : body === undefined ? Buffer.from('', 'utf8') : Buffer.from(JSON.stringify(body), 'utf8')
   const req = Readable.from(payload.length > 0 ? [payload] : [])
@@ -53,12 +60,16 @@ async function call(method, endpoint, body, raw) {
     },
     end(chunk) { if (chunk !== undefined) captured.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8')) }
   }
-  await handler(req, res)
+  await target(req, res)
   const bytes = Buffer.concat(captured.chunks)
   const text = bytes.toString('utf8')
   let json = null
   try { json = JSON.parse(text) } catch { json = null }
   return { status: captured.status, json, raw: text, bytes, type: captured.type }
+}
+
+async function call(method, endpoint, body, raw) {
+  return invoke(handler, method, endpoint, body, raw)
 }
 
 /** 同上，但打观众页那条前缀（/moling/present/…），没有 { ok, value } 信封。 */
@@ -142,6 +153,129 @@ console.log('4) 读写文件')
 
   const reject = await call('POST', 'write-file', { root: fixtures, path: 'evil.exe', content: 'x' })
   reject.json && reject.json.ok === false ? ok('拒绝写非文本类型') : bad('非文本写入未被拒')
+
+  // ---- 文件树右键的五个动作（用户 2026-11-19）----
+  const mk = await call('POST', 'new-file', { root: fixtures, path: 'tree-op/a.tex', content: '% a\n' })
+  mk.json && mk.json.ok && existsSync(join(fixtures, 'tree-op/a.tex')) ? ok('new-file 建文件（自动建父目录）') : bad('new-file 失败', JSON.stringify(mk.json).slice(0, 120))
+  const mkAgain = await call('POST', 'new-file', { root: fixtures, path: 'tree-op/a.tex', content: 'x' })
+  mkAgain.json && mkAgain.json.code === 'exists' ? ok('new-file 已存在不覆盖（回 exists）') : bad('new-file 覆盖了已有文件', JSON.stringify(mkAgain.json).slice(0, 120))
+  const mkBad = await call('POST', 'new-file', { root: fixtures, path: 'tree-op/b.exe', content: 'x' })
+  mkBad.json && mkBad.json.ok === false ? ok('new-file 拒绝非文本类型') : bad('new-file 非文本未被拒')
+
+  const md = await call('POST', 'new-dir', { root: fixtures, path: 'tree-op/sub' })
+  md.json && md.json.ok && existsSync(join(fixtures, 'tree-op/sub')) ? ok('new-dir 建目录') : bad('new-dir 失败', JSON.stringify(md.json).slice(0, 120))
+
+  const cp1 = await call('POST', 'copy-path', { root: fixtures, from: 'tree-op/a.tex', to: 'tree-op/sub/a2.tex' })
+  cp1.json && cp1.json.ok && existsSync(join(fixtures, 'tree-op/sub/a2.tex')) ? ok('copy-path 复制文件') : bad('copy-path 失败', JSON.stringify(cp1.json).slice(0, 120))
+  const cp2 = await call('POST', 'copy-path', { root: fixtures, from: 'tree-op/a.tex', to: 'tree-op/sub/a2.tex' })
+  cp2.json && cp2.json.code === 'exists' ? ok('copy-path 目标已存在不覆盖') : bad('copy-path 覆盖了', JSON.stringify(cp2.json).slice(0, 120))
+
+  const rn = await call('POST', 'rename-path', { root: fixtures, from: 'tree-op/sub/a2.tex', to: 'tree-op/sub/b2.tex' })
+  rn.json && rn.json.ok && existsSync(join(fixtures, 'tree-op/sub/b2.tex')) ? ok('rename-path 重命名') : bad('rename-path 失败', JSON.stringify(rn.json).slice(0, 120))
+
+  const rmFile = await call('POST', 'remove-path', { root: fixtures, path: 'tree-op/sub/b2.tex' })
+  rmFile.json && rmFile.json.ok && !existsSync(join(fixtures, 'tree-op/sub/b2.tex')) ? ok('remove-path 删文件') : bad('remove-path 删文件失败', JSON.stringify(rmFile.json).slice(0, 120))
+  const rmDirNotEmpty = await call('POST', 'remove-path', { root: fixtures, path: 'tree-op' })
+  rmDirNotEmpty.json && rmDirNotEmpty.json.code === 'not-empty'
+    ? ok('remove-path 拒绝删非空目录（防手滑毁项目）')
+    : bad('remove-path 不该删掉非空目录', JSON.stringify(rmDirNotEmpty.json).slice(0, 120))
+  const rmDir = await call('POST', 'remove-path', { root: fixtures, path: 'tree-op/sub/a.tex' })
+  const rmDir2 = await call('POST', 'remove-path', { root: fixtures, path: 'tree-op/sub' })
+  rmDir2.json && rmDir2.json.ok ? ok('remove-path 删空目录') : bad('remove-path 删空目录失败', JSON.stringify(rmDir2.json).slice(0, 120))
+
+  // PDF 目录（书签）：解析 hyperref 的 .out + pdfinfo -dests（用户 2026-11-19 要求加「PDF 目录」按钮）
+  {
+    const tocDir = mkdtempSync(join(tmpdir(), 'moling-toc-'))
+    try {
+      writeFileSync(join(tocDir, 'x.tex'), [
+        '\\documentclass[aspectratio=43]{beamer}',
+        '\\usepackage[bookmarks=true]{hyperref}',
+        '\\begin{document}',
+        '\\section{Alpha}',
+        '\\begin{frame}{One}one\\end{frame}',
+        '\\section{Beta}',
+        '\\begin{frame}{Two}two\\end{frame}',
+        '\\end{document}'
+      ].join('\n'))
+      const detection = detectTexLive(null)
+      const xelatex = getEnginePath(detection.path, 'xelatex') || 'xelatex'
+      const built = await new Promise((resolve) => {
+        const child = spawn(xelatex, ['-interaction=nonstopmode', 'x.tex'], { cwd: tocDir })
+        child.on('close', resolve)
+        child.on('error', () => resolve(1))
+      })
+      const hasPdf = existsSync(join(tocDir, 'x.pdf'))
+      const hasOut = existsSync(join(tocDir, 'x.out'))
+      if (built !== 0 || !hasPdf) {
+        // 本机没有可用的 xelatex：跳过这两条，别把缺工具算成失败
+        skip('PDF 目录解析（本机没有可用的 xelatex）')
+        skip('PDF 目录带页码')
+      } else {
+        // 用一个新的 handler（allowedRoots 只放这个临时目录），再走同一套假 req/res
+        const handler2 = createPanelHandler({
+          getConfig: () => ({ allowedRoots: [tocDir] }),
+          getWorkspaces: () => [],
+          getTexEnv: () => ({ texlivePath: null, engine: 'xelatex', timeoutMs: 120000 })
+        })
+        const outline = await invoke(handler2, 'POST', 'pdf-outline', { root: tocDir, path: 'x.pdf' })
+        const entries = outline.json && outline.json.ok ? outline.json.value.entries || [] : []
+        const titles = entries.map((item) => item.title)
+        hasOut && titles.indexOf('Alpha') >= 0 && titles.indexOf('Beta') >= 0
+          ? ok('PDF 目录：从 .out 解析出书签标题与层级', titles.join(' / '))
+          : bad('PDF 目录解析不对', JSON.stringify(outline.json).slice(0, 160))
+        const paged = entries.filter((item) => Number(item.page) > 0).length
+        paged >= 2
+          ? ok('PDF 目录：用 pdfinfo -dests 补上页码', paged + ' 条有页码')
+          : bad('PDF 目录没有页码', JSON.stringify(entries).slice(0, 160))
+      }
+    } finally {
+      rmSync(tocDir, { recursive: true, force: true })
+    }
+  }
+
+  // 越界保护：五个动作都不许跳出 root
+  const escape = await call('POST', 'new-file', { root: fixtures, path: '../../evil.tex', content: 'x' })
+  escape.json && escape.json.ok === false && escape.status === 400 ? ok('new-file 路径越界被拒') : bad('new-file 越界未被拒', JSON.stringify(escape.json).slice(0, 120))
+  rmSync(join(fixtures, 'tree-op'), { recursive: true, force: true })
+
+  // ---- 原子写：临时文件不留痕、内容是整份 ----
+  // 直接 writeFileSync 有两种坏法：写到一半被杀留半截文件（下次编译报
+  // `File ended while scanning use of \frame`），以及和桌面版互写撞 ReplaceFile EIO。
+  // 现在改成「同目录 .tmp → fsync → rename」。
+  const dirBefore = readdirSync(fixtures)
+  const bigBody = Array.from({ length: 400 }, (_, i) => `行 ${i}: 混合交通下智能网联车队协同换道决策`).join('\n') + '\n'
+  const big = await call('POST', 'write-file', { root: fixtures, path: 'atomic-big.tex', content: bigBody })
+  const dirAfter = readdirSync(fixtures)
+  const leftovers = dirAfter.filter((name) => name.endsWith('.tmp') && !dirBefore.includes(name))
+  big.json && big.json.ok ? ok('大文件原子写成功', `${big.json.value.bytes} 字节`) : bad('原子写失败', JSON.stringify(big.json).slice(0, 120))
+  leftovers.length === 0 ? ok('写完不留 .tmp 临时文件') : bad('残留临时文件', leftovers.join(','))
+  const bigBack = await call('POST', 'read-file', { root: fixtures, path: 'atomic-big.tex' })
+  bigBack.json && bigBack.json.value.text === bigBody ? ok('原子写内容与写入完全一致（无截断）') : bad('原子写内容不一致')
+
+  // ---- 并发冲突检查（baseMtime）----
+  // 磁盘版本被别人改过 → 不回写、回 409 conflict；force: true 才覆盖。
+  const stale = await call('POST', 'write-file', {
+    root: fixtures, path: 'atomic-big.tex', content: '% 旧缓冲覆盖\n',
+    baseMtime: (big.json && big.json.value.mtime ? big.json.value.mtime : 1) - 60000
+  })
+  stale.status === 400 && stale.json && stale.json.code === 'conflict'
+    ? ok('磁盘版本变过就拒绝写（conflict）', stale.json.error.slice(0, 20) + '…')
+    : bad('冲突未被拦下', JSON.stringify(stale.json).slice(0, 140))
+  const stillBig = await call('POST', 'read-file', { root: fixtures, path: 'atomic-big.tex' })
+  stillBig.json && stillBig.json.value.text === bigBody ? ok('冲突时磁盘内容一个字没动') : bad('冲突时磁盘被改写了')
+
+  const forced = await call('POST', 'write-file', {
+    root: fixtures, path: 'atomic-big.tex', content: '% 确认覆盖\n',
+    baseMtime: 1, force: true
+  })
+  forced.json && forced.json.ok ? ok('force: true 可以覆盖（用户确认后）') : bad('force 覆盖失败', JSON.stringify(forced.json).slice(0, 120))
+
+  const fresh = await call('POST', 'write-file', {
+    root: fixtures, path: 'atomic-big.tex', content: '% 三\n',
+    baseMtime: forced.json && forced.json.value ? forced.json.value.mtime : 0
+  })
+  fresh.json && fresh.json.ok ? ok('baseMtime 与磁盘一致就正常写') : bad('一致时被误拦', JSON.stringify(fresh.json).slice(0, 120))
+  rmSync(join(fixtures, 'atomic-big.tex'), { force: true })
 
   // 提纲：解析章节标题与行号（面板左下角浮层用）
   const outline = await call('POST', 'outline', { root: fixtures, file: 'hello-en.tex' })
