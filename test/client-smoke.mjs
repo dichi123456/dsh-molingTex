@@ -691,6 +691,19 @@ try {
       /pdfTools: \{[\s\S]{0,520}?flexWrap: 'nowrap'/.test(src) &&
         /pdfTools: \{[\s\S]{0,560}?overflowX: 'auto'/.test(src)],
     ['图标按钮统一 24×24', /pdfToolBtn: \{[\s\S]{0,200}?width: 24, height: 24/.test(src)],
+    // ---- PDF 反色预览（用户 m04844，夜间看白底论文）----
+    ['PDF 工具栏有「反色」按钮（半黑半白圆图标，接 pdfInvert）',
+      /className: 'ml-pdf-invert-btn'[\s\S]{0,420}?pdfInvert: store\.pdfInvert !== true/.test(src)],
+    ['反色用 invert + hue-rotate（白变黑但颜色不变负片）',
+      src.includes("filter: 'invert(1) hue-rotate(180deg)'") && !/filter: 'invert\(1\)'/ .test(src.replace("invert(1) hue-rotate(180deg)",""))],
+    ['反色只作用于右栏预览容器（不碰缓存的 PNG、不碰投屏）',
+      /style: store\.pdfInvert === true \? Object\.assign\(\{\}, S\.pdfScroll, \{ filter:/.test(src) &&
+        !/presentAudienceOrigin[\s\S]{0,2000}?invert/.test(src)],
+    ['反色是这台机器的偏好（存 localStorage，不进会话分片）',
+      /pdfInvert: state\.pdfInvert === true,/.test(src) &&
+        /pdfInvert: saved\.pdfInvert === true,/.test(src) &&
+        bundle.__SESSION_FIELDS.indexOf('pdfInvert') < 0],
+    ['反色默认关（不影响现有观感）', /pdfInvert: false,/.test(src)],
     ['没有 PDF 时缩放/适应/页数都置灰',
       src.includes('S.pdfToolBtn, !tab ? S.pdfToolBtnOff : null') &&
         src.includes('(!store.pdfRel || !store.pdfPages) ? S.pdfToolBtnOff : null')],
@@ -1209,6 +1222,45 @@ try {
   await sync()
   ok('PDF 重新编译后自动换图', store.pdfRev === '102' && calls.includes('pdf'))
 
+  // ---- 回归：自己刚保存完，大模型紧接着写同一份文件（用户 2026-11-27 报的那条）----
+  // 老代码在 isSelfWrite 宽限期里直接把磁盘新 mtime 盖章吞掉 → 大模型那次改动永远进不来，
+  // 表现就是「大模型改完编辑区不刷新、浅绿也没了」。
+  {
+    Object.assign(store, { notice: '', noticeOk: true })
+    store.tabs[0].dirty = false
+    store.tabs[0].text = 'new content from the LLM'
+    bundle.__stampOf('main.tex')  // 确保已盖戳
+    disk.text = 'saved by me'
+    mtime = 10
+    await sync()                  // 第一次：登记
+    await sync()                  // 第二次：读进来
+    ok('先把自己的保存同步进来', store.tabs[0].text === 'saved by me')
+    // 现在模拟「刚刚自己写过盘」，同时大模型又写了
+    bundle.__markSelfWrite('main.tex', Date.now())
+    disk.text = 'LLM edits right after my save'
+    mtime = 11
+    await sync()
+    await sync()
+    ok('自写宽限期内的大模型改动也会被读进来（不被盖章吞掉）',
+      store.tabs[0].text === 'LLM edits right after my save')
+    ok('自写宽限期内的外部改动照样标绿',
+      Boolean(bundle.__takeFlash('w-1')) || String(store.notice).includes('已同步'))
+    ok('自写宽限期长于轮询间隔（2 秒）', bundle.__SELF_WRITE_GRACE_MS > 2000)
+  }
+
+  // ---- 回归：脏标记卡住会让编辑区永久不刷新（合并写回的 setDoc/onChange 竞态）----
+  {
+    Object.assign(store, { notice: '', noticeOk: true })
+    store.tabs[0].dirty = true          // 假脏：内容其实等于基准
+    disk.text = 'a brand new paragraph'
+    mtime = 20
+    await sync()
+    await sync()
+    ok('内容等于基准的「假脏」标签不会挡住同步',
+      store.tabs[0].text === 'a brand new paragraph' && store.tabs[0].dirty === false)
+    ok('假脏自检后仍然照常标绿', Boolean(bundle.__takeFlash('w-1')))
+  }
+
   // 大模型新建了文件 → 文件清单变 → 树跟着换
   extra.push({ rel: 'new-chapter.tex', name: 'new-chapter.tex', size: 12, mtime: 5, editable: true })
   await sync()
@@ -1308,7 +1360,8 @@ try {
     /if \(suppressDirtyText !== null && normalizeEol\(text\) === normalizeEol\(suppressDirtyText\)\)/.test(src)
     && /setTab\(tab\.id, \{ text: text, dirty: true \}\)/.test(src))
   ok('setDoc 前先记下预期文本', src.includes('suppressDirtyText = tab.text'))
-  const reloadAt = src.indexOf('setTab(tab.id, { text: data.text, loading: false })')
+  // 这一行还顺带清 dirty（假脏自检），所以按前缀找
+  const reloadAt = src.indexOf('setTab(tab.id, { text: data.text, loading: false')
   const flashAt = src.indexOf('try { queueFlash(tab.id, live.text, data.text) }')
   // 用户 2026-11-16 报的「绿标又没了」：排队必须**先于** setTab。
   // 反过来的话 setTab 触发的重渲染会抢先把 effect 跑掉，takeFlash 拿到空值。
@@ -2295,6 +2348,51 @@ try {
       /btnIcon: \{[\s\S]{0,260}?width: 20, height: 18/.test(src)],
     ['留着文字的只剩「首页」和保存分体按钮（它们带状态/不可替代）',
       /\}, toolbarIcon\([\s\S]{0,300}?'首页'\)/.test(src) && src.indexOf("'手动保存'") > 0],
+    // ---- 编译取消 + 实时进度（用户 m04990「编译体验」）----
+    ['编译中按钮变成可点的「取消」（不再是死灰）',
+      /store\.busy === 'compile' \? \{ border: '1px solid ' \+ C\.err/.test(src) &&
+        /disabled: !tab,/.test(src) &&
+        /store\.busy === 'compile' \? \('取消'/.test(src)],
+    ['编译进度按 400ms 轮询 compile-status',
+      /COMPILE_POLL_MS = 400/.test(src) && /api\('compile-status'/.test(src)],
+    ['取消走 AbortController（宿主 killProcessTree）',
+      /function cancelCompile\(\)/.test(src) && /job\.controller\.abort\(\)/.test(src)],
+    ['取消后报「已取消」而不是「编译失败」',
+      /aborted \) \{\s*\n\s*patch\(\{ busy: '', error: '', notice: '已取消编译'/.test(src) ||
+        /notice: '已取消编译'/.test(src)],
+    ['api() 支持传 AbortSignal（只有显式给才带）',
+      /function api\(endpoint, payload, options\)/.test(src) && /if \(options && options\.signal\) opts\.signal/.test(src)],
+    ['进度文案纯函数（秒数·步骤，过长截断）',
+      (() => {
+        const fn = bundle.__compileProgressText
+        if (typeof fn !== 'function') return false
+        const a = fn({ compileProgress: { elapsedMs: 3200, step: '运行 xelatex：C:\\tex\\xelatex -interaction' } })
+        const b = fn({ compileProgress: { elapsedMs: 65000, step: '完成' } })
+        const c = fn({ compileProgress: null })
+        return a === '3.2s · 运行 xelatex' && b === '1m05s · 完成' && c === ''
+      })()],
+    ['取消导出可被自测驱动', typeof bundle.__cancelCompile === 'function'],
+    // ---- tex 预览区右上角的悬浮块里要有换行开关（用户 2026-11-27 要求加回来）----
+    ['tex 悬浮块里有换行按钮（ml-wrap-fab，与顶栏共用同一个 store.wrap）',
+      /className: 'ml-wrap-fab'/.test(src) &&
+        /className: 'ml-wrap-fab'[\s\S]{0,420}?patch\(\{ wrap: !store\.wrap \}\); persist\(\)/.test(src)],
+    ['换行按钮在注释之后、md 切换之前（位置紧挨注释钮）',
+      (() => {
+        const bar = src.indexOf("className: 'ml-fab-bar'")
+        if (bar < 0) return false
+        // 窗口给足：中间隔着两个 SVG（path 字符串很长），3200 会截断到 search 之前
+        const seg = src.slice(bar, bar + 8000)
+        const c = seg.indexOf("className: 'ml-comment-fab'")
+        const w = seg.indexOf("className: 'ml-wrap-fab'")
+        const m = seg.indexOf("className: 'ml-md-toggle'")
+        const s = seg.indexOf("className: 'ml-search-fab'")
+        return c >= 0 && w > c && (m < 0 || w < m) && w < s
+      })()],
+    ['换行按钮两态都用 fabBar 现成的开/关样式（不自造第三套颜色）',
+      // style 写在 className 之前，所以从 style 往后找 className
+      /store\.wrap \? S\.commentFabOn : S\.commentFabOff\)[\s\S]{0,80}?className: 'ml-wrap-fab'/.test(src)],
+    ['换行按钮有可读的两态提示（悬停能看到开/关）',
+      /软换行：开（点一下关掉/.test(src) && /软换行：关（点一下打开）/.test(src)],
     ['tex 的 fabBar 与 PDF 工具栏同一水平线（都是距标签条底边 5px）',
       /fabBar: \{[\s\S]{0,160}?top: 5, right: 14/.test(src)],
     ['右栏是定位上下文（否则悬浮工具栏跑掉）',
@@ -2404,9 +2502,10 @@ try {
     ['保存时带上磁盘既有 mtime（乐观并发检查用）',
       /var baseMtime = Number\(stamps\[tab\.rel\] \|\| 0\)/.test(src) &&
         /payload\.baseMtime = baseMtime/.test(src)],
-    ['冲突时不再写、只提示（标签保持脏，内容不丢）',
-      /code === 'conflict' && !force[\s\S]{0,320}?saveConflict: true/.test(src) &&
-        /notice: describe\(failure\) \+ ' —— 再点一次「保存」/.test(src)],
+    ['冲突时不直接覆盖：先自动合并，合不了才提示（标签保持脏）',
+      /code === 'conflict' && !force\)[\s\S]{0,600}?autoMergeOnConflict\(/.test(src) &&
+        /saveConflict: true/.test(src) &&
+        /再点一次「保存」= 用当前编辑器的内容覆盖磁盘版本/.test(src)],
     ['再点一次保存就带 force 覆盖（不用用户另找开关）',
       /var force = Boolean\(\(options && options\.force\) \|\| state\.saveConflict\)/.test(src)],
     // 关键：外部同步的「脏标签」分支如果顺手盖 stamps，baseMtime 就永远等于磁盘值、
@@ -2422,6 +2521,47 @@ try {
       /if \(json && json\.code\) failure\.code = String\(json\.code\)/.test(src)],
     ['保存钩子可被自测驱动（不然 conflicts 分支只能靠读源码）',
       typeof bundle.__saveTab === 'function' && typeof bundle.__setSaveConflict === 'function'],
+    // ---- 三方合并（v1.1.3，用户 m04899）----
+    ['diff3：两边改不同行 → 自动合并，两份都在', (() => {
+      const base = Array.from({ length: 200 }, (_, i) => 'line ' + (i + 1)).join('\n')
+      const mine = base.split('\n'); mine[105] = 'line 106 EDITED BY ME'
+      const theirs = base.split('\n'); for (let i = 0; i < 100; i++) theirs[i] = 'line ' + (i + 1) + ' AGENT'
+      const r = bundle.__mergeThreeWay(base, mine.join('\n'), theirs.join('\n'))
+      if (!r.ok) return false
+      const L = r.text.split('\n')
+      return L.length === 200 && L[0] === 'line 1 AGENT' && L[105] === 'line 106 EDITED BY ME' && L[199] === 'line 200'
+    })()],
+    ['diff3：改同一行 → 判冲突不硬合', (() => {
+      const base = 'A\nB\nC\nD'
+      const r = bundle.__mergeThreeWay(base, 'A\nX\nC\nD', 'A\nY\nC\nD')
+      return r.ok === false && r.reason === 'conflict' && r.conflict && r.conflict.mine.start === 2
+    })()],
+    ['diff3：对方没改 → 直接拿我的', (() => {
+      const base = 'A\nB\nC'
+      const r = bundle.__mergeThreeWay(base, 'A\nB2\nC', base)
+      return r.ok === true && r.text === 'A\nB2\nC'
+    })()],
+    ['diff3：我没改 → 直接拿对方的', (() => {
+      const base = 'A\nB\nC'
+      const r = bundle.__mergeThreeWay(base, base, 'A\nB3\nC')
+      return r.ok === true && r.text === 'A\nB3\nC'
+    })()],
+    ['diff3：超 2MB 拒绝硬合（退回人工）', (() => {
+      const big = 'x'.repeat(2 * 1024 * 1024 + 10)
+      const r = bundle.__mergeThreeWay('a', big, 'b')
+      return r.ok === false && r.reason === 'too-large'
+    })()],
+    ['保存冲突先走自动合并（不是直接让用户覆盖）',
+      /code === 'conflict' && !force\)[\s\S]{0,300}?autoMergeOnConflict\(/.test(src)],
+    ['合并成功用 force 写回并更新基准全文',
+      /force: true[\s\S]{0,400}?baseText\[rel\] = merged\.text/.test(src)],
+    ['合并要防重入（同一标签不并发跑两次）',
+      /var mergingTabs = \{\}/.test(src) && /if \(mergingTabs\[id\]\) return Promise\.resolve\(\)/.test(src)],
+    ['基准全文三处更新（打开 / 保存成功 / 外部同步）',
+      (src.match(/baseText\[[^\]]+\] = /g) || []).length >= 4],
+    ['切会话与换项目都会清基准全文',
+      /baseText = \{\}   \/\/ 三方合并的基准全文属于上一个会话/.test(src) &&
+        (src.match(/baseText = \{\}/g) || []).length >= 2],
     // ---- markdown 渲染预览（用户 2026-11-19：md 打开直接看效果，按钮放注释旁边）----
     ['依赖声明里有 DSH 的渲染器包（平台模块表 PLATFORM_MODULES 里的那个）',
       (() => {

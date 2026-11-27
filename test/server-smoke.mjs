@@ -368,7 +368,13 @@ console.log('5) 编译 → PDF → 清理')
 
     // 面板编过之后要把档位记下来：工具侧 latex_compile 缺省参数时沿用它，
     // 否则两边一个 quick 一个 full、一个 xelatex 一个 pdflatex 会互相污染 aux。
-    const remembered = handler.core.lastCompileOf()
+    // 编译进度端点（用户 m04990「编译体验」）：空闲时应报 active:false，不崩
+  {
+    const idle = await call('POST', 'compile-status', {})
+    const idleOk = idle.json && idle.json.ok && idle.json.value && idle.json.value.active === false
+    idleOk ? ok('编译进度端点空闲时返回 active:false') : bad('compile-status 空闲态不对', JSON.stringify(idle.json).slice(0, 160))
+  }
+  const remembered = handler.core.lastCompileOf()
     remembered && remembered.mode === 'quick' && remembered.file.endsWith('hello-en.tex')
       ? ok('记住面板本次编译档位（工具缺省时沿用）', `${remembered.mode} / ${remembered.engine}`)
       : bad('未记住面板编译档位', JSON.stringify(remembered))
