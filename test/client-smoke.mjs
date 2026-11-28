@@ -1209,12 +1209,15 @@ try {
   ok('没变化就不动', store.tabs[0].text === 'new content from the LLM')
 
   // 标签有未保存改动 → 只提醒，绝不覆盖
+  // 注意：v1.1.7 起「脏」是以**内容**为准（内容 ≠ 上次读到的磁盘全文）。
+  // 只翻 dirty 标志不动内容＝假脏，会被自检抹掉 —— 所以这里必须真的改内容。
+  store.tabs[0].text = 'new content from the LLM + my own edit'
   store.tabs[0].dirty = true
   disk.text = 'LLM wrote again'
   mtime = 3
   await sync()
   await sync()
-  ok('脏标签不被外部改动覆盖', store.tabs[0].text === 'new content from the LLM')
+  ok('脏标签不被外部改动覆盖', store.tabs[0].text === 'new content from the LLM + my own edit')
   ok('脏标签给出红色提醒', String(store.notice).includes('未保存') && store.noticeOk === false)
 
   // PDF 被（大模型）重新编译 → 自动换图
@@ -1228,7 +1231,11 @@ try {
   {
     Object.assign(store, { notice: '', noticeOk: true })
     store.tabs[0].dirty = false
-    store.tabs[0].text = 'new content from the LLM'
+    // 新口径：内容要与 baseText 一致才算「没改」。前一段把编辑区留在了 '+ my own edit'，
+    // 这里显式同步回 baseText（= 上次读到的磁盘全文 'new content from the LLM & LLM wrote again' 之前那版），
+    // 做法是让 baseText 与当前文本一致：直接读一遍磁盘即可（disk 还是 'LLM wrote again'）。
+    store.tabs[0].text = 'LLM wrote again'
+    bundle.__setBaseText('main.tex', 'LLM wrote again')   // 基准对齐 → 判定为「没改」
     bundle.__stampOf('main.tex')  // 确保已盖戳
     disk.text = 'saved by me'
     mtime = 10
@@ -1251,7 +1258,7 @@ try {
   // ---- 回归：脏标记卡住会让编辑区永久不刷新（合并写回的 setDoc/onChange 竞态）----
   {
     Object.assign(store, { notice: '', noticeOk: true })
-    store.tabs[0].dirty = true          // 假脏：内容其实等于基准
+    store.tabs[0].dirty = true          // 假脏：内容其实等于基准（新口径下应被判为不脏）
     disk.text = 'a brand new paragraph'
     mtime = 20
     await sync()
@@ -1356,10 +1363,12 @@ try {
   // 回归：外部 setDoc 会走内核 onChange，不挡住就会把标签标脏 → 之后每次外部改动
   // 都被 reloadTab 的「有未保存改动」拦住（症状就是"同步突然不工作了"）
   // 注意比对必须抹平换行：磁盘 CRLF、CodeMirror 内部永远 LF，直接 === 会比不中
-  ok('onChange 认得「刚同步下去的文本」，不标脏',
-    /if \(suppressDirtyText !== null && normalizeEol\(text\) === normalizeEol\(suppressDirtyText\)\)/.test(src)
+  ok('onChange 认得「刚同步下去的文本」，不标脏（按标签 id 存，不会互相踩）',
+    /var expected = suppressDirtyText\[tab\.id\]/.test(src)
+    && /normalizeEol\(text\) === normalizeEol\(expected\)/.test(src)
     && /setTab\(tab\.id, \{ text: text, dirty: true \}\)/.test(src))
-  ok('setDoc 前先记下预期文本', src.includes('suppressDirtyText = tab.text'))
+  ok('setDoc 前先记下预期文本（内容一样时不留残值）', /suppressDirtyText\[tab\.id\] = tab\.text/.test(src)
+    && /kernel\.getDoc\(view\) !== tab\.text/.test(src))
   // 这一行还顺带清 dirty（假脏自检），所以按前缀找
   const reloadAt = src.indexOf('setTab(tab.id, { text: data.text, loading: false')
   const flashAt = src.indexOf('try { queueFlash(tab.id, live.text, data.text) }')
@@ -1581,7 +1590,7 @@ try {
       && src.includes('if (autoCompilePending) scheduleAutoCompile()')],
     ['编译中、标签仍脏都不开编（等静默窗口）',
       src.includes('if (compiling || state.busy) { autoCompilePending = true; return }')
-      && src.includes('if (tab && tab.dirty) { autoCompilePending = true; return }')],
+      && src.includes('if (tab && tabHasUnsavedChanges(tab)) { autoCompilePending = true; return }')],
     ['关着的时候不排期', src.includes('if (state.autoCompile !== true) return')],
     ['保存成功后触发', /scheduleAutoCompile\(\)\s*\/\/ 「自编」开着就顺手编一次/.test(src)],
     ['外部改动同步后触发', /scheduleAutoCompile\(\)\s*\/\/ 「自编」开着：大模型改完就自动编一次/.test(src)],
@@ -1634,7 +1643,7 @@ try {
     })()],
     ['自动保存的唯一触发点：标签变脏', src.includes('if (next && next.dirty === true) scheduleAutoSave(id)')],
     ['自动模式才存、停手 1.2 秒', src.includes("if (state.saveMode !== 'auto') return") && src.includes('}, 1200)')],
-    ['切到自动时立刻把脏标签存一次', src.includes("if (next === 'auto' && live && live.dirty) saveTab(live.id)")],
+    ['切到自动时立刻把脏标签存一次', src.includes("if (next === 'auto' && live && tabHasUnsavedChanges(live)) saveTab(live.id)")],
     ['换项目清掉待触发的自动保存', src.includes('if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null }')]
   ]
   for (const [label, passed] of saveChecks) passed ? ok(label) : bad(label)
@@ -2393,6 +2402,41 @@ try {
       /store\.wrap \? S\.commentFabOn : S\.commentFabOff\)[\s\S]{0,80}?className: 'ml-wrap-fab'/.test(src)],
     ['换行按钮有可读的两态提示（悬停能看到开/关）',
       /软换行：开（点一下关掉/.test(src) && /软换行：关（点一下打开）/.test(src)],
+    // ---- 脏判定改成「以内容为准」（用户 2026-11-27：「老是提示磁盘已被改过，还要手动点保存」）----
+    ['新增「有没有未保存改动」以内容为准的判定（不信 dirty 标志）',
+      /function tabHasUnsavedChanges\(tab\)/.test(src) &&
+        /return normalizeEol\(tab\.text\) !== normalizeEol\(base\)/.test(src)],
+    ['保存入口先看内容（假脏直接抹掉，不去写盘）',
+      /if \(!tab \|\| !tabHasUnsavedChanges\(tab\)\) \{[\s\S]{0,120}?setTab\(id, \{ dirty: false \}\)/.test(src)],
+    ['同步的「脏标签」分支也走内容判定（假脏不再挡住同步）',
+      /if \(tabHasUnsavedChanges\(tab\)\) \{/.test(src) && /if \(tab\.dirty && !tabHasUnsavedChanges\(tab\)\) setTab/.test(src)],
+    ['自动保存 / 自动编译 / 编译前保存 全部走同一个判定',
+      (src.match(/tabHasUnsavedChanges\(/g) || []).length >= 6],
+    // 单槽全局预期文本会被别的标签/上一轮残值踩掉 → 按 tab.id 存
+    ['setDoc 的「预期文本」按标签 id 存（不再用单槽全局）',
+      /var suppressDirtyText = \{\}/.test(src) && /var expected = suppressDirtyText\[tab\.id\]/.test(src)],
+    ['内容本来一样时不登记预期文本（避免残值）',
+      /kernel\.getDoc\(view\) !== tab\.text/.test(src)],
+    ['切会话 / 换项目都清空预期文本',
+      (src.match(/suppressDirtyText = \{\}/g) || []).length >= 3],
+    // ---- 编译方式必须跟随用户选择（用户 2026-11-27：「选了无图，自动编译还是有图」）----
+    ['菜单里选的方式会先收敛成四种合法值',
+      /patch\(\{ mode: normalizeCompileMode\(pair\[0\]\), compileMenu: false \}\)/.test(src)],
+    ['localStorage 恢复时也收敛（历史脏值不会被静默当成 full）',
+      /mode: normalizeCompileMode\(saved\.mode\)/.test(src)],
+    ['编译开始那一刻定格 runMode，之后发的就是它',
+      // 中间隔着 job 字面量、busy patch、startCompileProgress、saveTab 链 —— 窗口给到 1500
+      /var runMode = normalizeCompileMode\(state\.mode\)[\s\S]{0,1500}?mode: runMode, engine: state\.engine/.test(src)],
+    ['野值会被就地纠正回界面（不再是「显示无图、实发 full」）',
+      /if \(runMode !== state\.mode\) patch\(\{ mode: runMode \}\)/.test(src)],
+    ['编译成功提示里带上用的哪种方式',
+      /'编译成功 · ' \+ compileModeLabel\(runMode\)/.test(src)],
+    ['自动编译走同一个入口（不会另起一套默认值）',
+      (function () {
+        const at = src.indexOf('function scheduleAutoCompile')
+        const seg = src.slice(at, at + 1400)
+        return /compileActive\(\)/.test(seg) && !/mode: *'full'/.test(seg)
+      })()],
     ['tex 的 fabBar 与 PDF 工具栏同一水平线（都是距标签条底边 5px）',
       /fabBar: \{[\s\S]{0,160}?top: 5, right: 14/.test(src)],
     ['右栏是定位上下文（否则悬浮工具栏跑掉）',
@@ -2512,7 +2556,8 @@ try {
     // 冲突检测形同虚设 —— 用户的编辑会静默覆盖别人的改动。
     ['脏标签遇到外部修改时不盖版本戳（否则冲突检测失效）',
       (() => {
-        const from = src.indexOf('if (tab.dirty) {')
+        // v1.1.7 起这个分支的判据换成内容（tabHasUnsavedChanges），不再看 dirty 标志
+        const from = src.indexOf('if (tabHasUnsavedChanges(tab)) {')
         const seg = src.slice(from, from + 400)
         return from > 0 && !/stamps\[tab\.rel\] = stamp/.test(seg)
       })()],
